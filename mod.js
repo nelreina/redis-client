@@ -253,4 +253,15 @@ export class RedisClient {
     await this.pubsub.close();
     console.info("✅ Redis pubsub connection closed");
   }
+
+  /**
+   * Increments a value by a specified amount
+   * @param {string} key - Key to increment
+   * @param {number} value - Amount to increment by
+   * @returns {Promise<number>} New value after increment
+   */
+  async incrBy(key, value) {
+    if (!this.client.isOpen) await this.client.connect();
+    return await this.client.incrBy(key, value);
+  }
 }
