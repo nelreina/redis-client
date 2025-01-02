@@ -1,7 +1,20 @@
 import { createClient } from "redis";
 import RedisStreamEvent from "@nelreina/redis-stream-event";
 
+/**
+ * Redis client wrapper class that provides simplified Redis operations
+ * including Pub/Sub, Streams, Hash operations, and more.
+ */
 export class RedisClient {
+  /**
+   * Creates a new Redis client instance
+   * @param {Object} config - Configuration object
+   * @param {string} config.redisHost - Redis host address
+   * @param {number} [config.redisPort=6379] - Redis port number
+   * @param {string} [config.redisUser] - Redis username for authentication
+   * @param {string} [config.redisPw] - Redis password for authentication
+   * @param {string} [config.serviceName="NO-NAME"] - Service identifier
+   */
   constructor({
     redisHost,
     redisPort = 6379,
@@ -26,6 +39,15 @@ export class RedisClient {
     if (!this.client.isOpen) this.client.connect();
   }
 
+  /**
+   * Builds Redis connection URL from components
+   * @private
+   * @param {string} host - Redis host address
+   * @param {number} port - Redis port number
+   * @param {string} [user] - Redis username
+   * @param {string} [password] - Redis password
+   * @returns {string|undefined} Formatted Redis URL or undefined
+   */
   buildRedisUrl(host, port, user, password) {
     if (!host) return undefined;
 
@@ -37,6 +59,12 @@ export class RedisClient {
     return url;
   }
 
+  /**
+   * Subscribes to a Redis channel
+   * @param {string} channel - Channel name to subscribe to
+   * @param {Function} callback - Callback function to handle received messages
+   * @returns {Promise<void>}
+   */
   async subscribe2RedisChannel(channel, callback) {
     if (!this.pubsub.isOpen) await this.pubsub.connect();
     await this.pubsub.subscribe(channel, (payload) => {
@@ -50,6 +78,12 @@ export class RedisClient {
     console.info(`✅ Subscribed to redis channel: ${channel}`);
   }
 
+  /**
+   * Publishes a message to a Redis channel
+   * @param {string} channel - Channel name to publish to
+   * @param {Object|string} payload - Message payload to publish
+   * @returns {Promise<number>} Number of clients that received the message
+   */
   async publish2RedisChannel(channel, payload) {
     if (!this.pubsub.isOpen) await this.pubsub.connect();
     let message;
@@ -62,6 +96,12 @@ export class RedisClient {
     return await this.pubsub.publish(channel, message);
   }
 
+  /**
+   * Sets multiple hash fields to multiple values
+   * @param {string} key - Hash key
+   * @param {Object} object - Object containing field-value pairs
+   * @returns {Promise<number>} Number of fields that were added
+   */
   async setHashValue(key, object) {
     if (!this.client.isOpen) await this.client.connect();
     const values = Object.entries(object).reduce((acc, [key, value]) => {
@@ -72,6 +112,11 @@ export class RedisClient {
     return await this.client.hSet(key, values);
   }
 
+  /**
+   * Retrieves all hash values from a set
+   * @param {string} key - Set key containing hash keys
+   * @returns {Promise<Array>} Array of hash objects with their values
+   */
   async getAllSetHashValues(key) {
     if (!this.client.isOpen) await this.client.connect();
     const keys = await this.client.sMembers(key);
@@ -83,6 +128,13 @@ export class RedisClient {
     return values;
   }
 
+  /**
+   * Sets a string value and adds it to a set
+   * @param {string} setKey - Set key to add the string key to
+   * @param {string} key - String key
+   * @param {string} value - String value
+   * @returns {Promise<boolean>} Operation success status
+   */
   async setStringValue(setKey, key, value) {
     if (!this.client.isOpen) await this.client.connect();
     await this.client.set(key, value);
@@ -90,6 +142,11 @@ export class RedisClient {
     return true;
   }
 
+  /**
+   * Retrieves all string values from keys in a set
+   * @param {string} setKey - Set key containing string keys
+   * @returns {Promise<Array<string>>} Array of string values
+   */
   async getAllStringValues(setKey) {
     if (!this.client.isOpen) await this.client.connect();
     const keys = await this.client.sMembers(setKey);
@@ -100,6 +157,11 @@ export class RedisClient {
     return values;
   }
 
+  /**
+   * Clears all string values referenced by keys in a set
+   * @param {string} setKey - Set key containing string keys
+   * @returns {Promise<boolean>} Operation success status
+   */
   async clearStringValues(setKey) {
     if (!this.client.isOpen) await this.client.connect();
     const keys = await this.client.sMembers(setKey);
@@ -109,6 +171,11 @@ export class RedisClient {
     return true;
   }
 
+  /**
+   * Gets or creates a Redis Stream Event instance
+   * @param {string} streamKeyName - Stream key name
+   * @returns {RedisStreamEvent} Redis Stream Event instance
+   */
   getEventStream(streamKeyName) {
     if (!this.eventStream) {
       return new RedisStreamEvent(this.client, streamKeyName, this.serviceName);
@@ -116,6 +183,13 @@ export class RedisClient {
     return this.eventStream;
   }
 
+  /**
+   * Connects to a Redis Stream and sets up event handling
+   * @param {string} streamKeyName - Stream key name
+   * @param {Function} [handler=(str) => console.info(str)] - Event handler function
+   * @param {boolean|Array<string>} [events=false] - Events to filter (true for all events)
+   * @returns {Promise<void>}
+   */
   async connectToEventStream(
     streamKeyName,
     handler = (str) => console.info(str),
@@ -131,12 +205,25 @@ export class RedisClient {
     await stream.subscribe(handler, events);
   }
 
+  /**
+   * Publishes an event to a Redis Stream
+   * @param {string} streamKeyName - Stream key name
+   * @param {string} event - Event type
+   * @param {string} aggregateId - Aggregate identifier
+   * @param {Object} payload - Event payload
+   * @returns {Promise<void>}
+   */
   async publishToStream(streamKeyName, event, aggregateId, payload) {
     if (!this.client.isOpen) await this.client.connect();
     const eventStream = this.getEventStream(streamKeyName);
     await eventStream.publish(event, aggregateId, payload);
   }
 
+  /**
+   * Gets a value by key from Redis
+   * @param {string} key - Key to retrieve
+   * @returns {Promise<string|null>} Value associated with the key
+   */
   async get(key) {
     if (!this.client.isOpen) await this.client.connect();
     return await this.client.get(key);

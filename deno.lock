@@ -2,11 +2,15 @@
   "version": "4",
   "specifiers": {
     "jsr:@nelreina/redis-stream-event@~0.2.2": "0.2.2",
+    "npm:@types/node@*": "22.5.4",
     "npm:redis@^4.7.0": "4.7.0_@redis+client@1.6.0"
   },
   "jsr": {
     "@nelreina/redis-stream-event@0.2.2": {
       "integrity": "acff1107000d52b4307769c2e6e883e1cae6ce6334157dcfaeac37846bee75e0"
+    },
+    "@nelreina/redis-stream-event@0.2.3": {
+      "integrity": "d4a19d2cd9df509a5246f1ad8eff78bb0e514e3a9d8603717e7997b8bf320523"
     }
   },
   "npm": {
@@ -48,6 +52,12 @@
         "@redis/client"
       ]
     },
+    "@types/node@22.5.4": {
+      "integrity": "sha512-FDuKUJQm/ju9fT/SeX/6+gBzoPzlVCzfzmGkwKvRHQVxi4BntVbyIwf6a4Xn62mrvndLiml6z/UBXIdEVjQLXg==",
+      "dependencies": [
+        "undici-types"
+      ]
+    },
     "cluster-key-slot@1.1.2": {
       "integrity": "sha512-RMr0FhtfXemyinomL4hrWcYJxmX6deFdCxpJzhDttxgO1+bcCnkk+9drydLVDmAMG7NE6aN/fl4F7ucU/90gAA=="
     },
@@ -64,6 +74,9 @@
         "@redis/search",
         "@redis/time-series"
       ]
+    },
+    "undici-types@6.19.8": {
+      "integrity": "sha512-ve2KP6f/JnbPBFyobGHuerC9g1FYGn/F8n1LWTwNxCEzd6IfqTwUQcNXgEtmmQ6DlRrC1hrSrBnCZPokRrDHjw=="
     },
     "yallist@4.0.0": {
       "integrity": "sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A=="
