@@ -264,4 +264,13 @@ export class RedisClient {
     if (!this.client.isOpen) await this.client.connect();
     return await this.client.incrBy(key, value);
   }
+
+  /**
+   * Gets the Redis client connection
+   * To execute Redis commands directly
+   * @returns {RedisClient} Redis client connection
+   */
+  getConnection() {
+    return this.client;
+  }
 }
