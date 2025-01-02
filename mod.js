@@ -228,4 +228,29 @@ export class RedisClient {
     if (!this.client.isOpen) await this.client.connect();
     return await this.client.get(key);
   }
+
+  /**
+   * Sets a value by key from Redis
+   * @param {string} key - Key to retrieve
+   * @param {string} value - Value to set
+   * @returns {Promise<string|null>} Value associated with the key
+   */
+  async set(key, value) {
+    if (!this.client.isOpen) await this.client.connect();
+    return await this.client.set(key, value);
+  }
+
+  /**
+   * Closes the Redis client connection
+   * @returns {Promise<void>}
+   */
+  async close() {
+    if (!this.client.isOpen) return;
+    await this.client.close();
+    console.info("✅ Redis client connection closed");
+
+    if (!this.pubsub.isOpen) return;
+    await this.pubsub.close();
+    console.info("✅ Redis pubsub connection closed");
+  }
 }
