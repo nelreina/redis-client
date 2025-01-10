@@ -182,7 +182,7 @@ export class RedisClient {
         this.client,
         streamKeyName,
         this.serviceName,
-        options = streamOptions,
+        streamOptions,
       );
     }
     return this.eventStream;
