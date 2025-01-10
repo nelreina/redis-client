@@ -176,9 +176,14 @@ export class RedisClient {
    * @param {string} streamKeyName - Stream key name
    * @returns {RedisStreamEvent} Redis Stream Event instance
    */
-  getEventStream(streamKeyName) {
+  getEventStream(streamKeyName, streamOptions = {}) {
     if (!this.eventStream) {
-      return new RedisStreamEvent(this.client, streamKeyName, this.serviceName);
+      return new RedisStreamEvent(
+        this.client,
+        streamKeyName,
+        this.serviceName,
+        options = streamOptions,
+      );
     }
     return this.eventStream;
   }
@@ -194,8 +199,9 @@ export class RedisClient {
     streamKeyName,
     handler = (str) => console.info(str),
     events = false,
+    timeZone = "America/Curacao",
   ) {
-    this.eventStream = this.getEventStream(streamKeyName);
+    this.eventStream = this.getEventStream(streamKeyName, { timeZone });
 
     if (!this.client.isOpen) await this.client.connect();
     const stream = await this.eventStream.createStream(

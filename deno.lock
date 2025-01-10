@@ -8,6 +8,9 @@
   "jsr": {
     "@nelreina/redis-stream-event@0.2.3": {
       "integrity": "d4a19d2cd9df509a5246f1ad8eff78bb0e514e3a9d8603717e7997b8bf320523"
+    },
+    "@nelreina/redis-stream-event@0.2.4": {
+      "integrity": "74a06044bba20520653da82e061fbb4d898bdd25bd4204c7edde8483ccb431fb"
     }
   },
   "npm": {
