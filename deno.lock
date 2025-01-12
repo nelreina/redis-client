@@ -11,6 +11,9 @@
     },
     "@nelreina/redis-stream-event@0.2.4": {
       "integrity": "74a06044bba20520653da82e061fbb4d898bdd25bd4204c7edde8483ccb431fb"
+    },
+    "@nelreina/redis-stream-event@0.3.0": {
+      "integrity": "c5ce63ad736606626815abd9bf7ec9be0435f914ebfe44606debb9beb3e1f244"
     }
   },
   "npm": {
