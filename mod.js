@@ -16,6 +16,7 @@ export class RedisClient {
    * @param {string} [config.serviceName="NO-NAME"] - Service identifier
    * @param {string} [config.timeZone="America/Curacao"] - Timezone for event timestamps
    * @param {number} [config.streamMaxLength=10000] - Maximum length of the stream
+   * @param {string} [config.streamConsumerName="consumer-1"] - Name of the stream consumer
    */
   constructor({
     redisHost,
@@ -25,6 +26,7 @@ export class RedisClient {
     serviceName = "NO-NAME",
     timeZone = "America/Curacao",
     streamMaxLength = 10000,
+    streamConsumerName = "consumer-1",
   }) {
     this.url = this.buildRedisUrl(redisHost, redisPort, redisUser, redisPw);
     this.serviceName = serviceName;
@@ -33,6 +35,7 @@ export class RedisClient {
     this.eventStream = null;
     this.timeZone = timeZone;
     this.streamMaxLength = streamMaxLength;
+    this.streamConsumerName = streamConsumerName;
     this.client.on("connect", () => {
       console.info(`✅ Connected to redis: ${this.url}`);
     });
@@ -208,6 +211,7 @@ export class RedisClient {
     this.eventStream = this.getEventStream(streamKeyName, {
       timeZone: this.timeZone,
       maxLength: this.streamMaxLength,
+      consumer: this.streamConsumerName,
     });
 
     if (!this.client.isOpen) await this.client.connect();
