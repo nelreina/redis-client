@@ -201,17 +201,20 @@ export class RedisClient {
    * @param {string} streamKeyName - Stream key name
    * @param {Function} [handler=(str) => console.info(str)] - Event handler function
    * @param {boolean|Array<string>} [events=false] - Events to filter (true for all events)
+   * @param {string} [startID="$"] - Start ID for the stream
    * @returns {Promise<void>}
    */
   async connectToEventStream(
     streamKeyName,
     handler = (str) => console.info(str),
     events = false,
+    startID= "$",
   ) {
     this.eventStream = this.getEventStream(streamKeyName, {
       timeZone: this.timeZone,
       maxLength: this.streamMaxLength,
       consumer: this.streamConsumerName,
+      startID,
     });
 
     if (!this.client.isOpen) await this.client.connect();
