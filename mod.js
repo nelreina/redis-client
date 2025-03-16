@@ -37,7 +37,7 @@ export class RedisClient {
     this.streamMaxLength = streamMaxLength;
     this.streamConsumerName = streamConsumerName;
     this.client.on("connect", () => {
-      console.info(`✅ Connected to redis: ${this.url}`);
+      console.info(`✅ Connected to redis: ${redisHost}`);
     });
 
     this.client.on("error", (error) => {
