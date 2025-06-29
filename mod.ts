@@ -422,14 +422,15 @@ export class RedisClient {
    * @param {string} event - Event type
    * @param {string} aggregateId - Aggregate identifier
    * @param {any} payload - Event payload
+   * @param {Record<string, string>} headers - Required headers
    * @returns {Promise<void>}
    */
-  async publishToStream(streamKeyName: string, event: string, aggregateId: string, payload: any): Promise<void> {
+  async publishToStream(streamKeyName: string, event: string, aggregateId: string, payload: any, headers: Record<string, string>): Promise<void> {
     if (!this.client.isOpen) await this.client.connect();
     const eventStream = this.getEventStream(streamKeyName);
     
     try {
-      await eventStream.publish(event, aggregateId, payload);
+      await eventStream.publish(event, aggregateId, payload, headers);
       if (this.enableMetrics) {
         if (!this.metrics.streams[streamKeyName]) {
           this.metrics.streams[streamKeyName] = { published: 0, consumed: 0, errors: 0 };
@@ -852,17 +853,17 @@ export class RedisClient {
   /**
    * Batch publishing to streams
    * @param {string} streamKeyName - Stream key name
-   * @param {Array<{event: string, aggregateId: string, payload: any}>} events - Array of events to publish
+   * @param {Array<{event: string, aggregateId: string, payload: any, headers: Record<string, string>}>} events - Array of events to publish
    * @returns {Promise<Array<{success: boolean, event?: any, error?: string}>>} Results for each event
    */
-  async publishBatchToStream(streamKeyName: string, events: Array<{event: string, aggregateId: string, payload: any}>): Promise<Array<{success: boolean, event?: any, error?: string}>> {
+  async publishBatchToStream(streamKeyName: string, events: Array<{event: string, aggregateId: string, payload: any, headers: Record<string, string>}>): Promise<Array<{success: boolean, event?: any, error?: string}>> {
     if (!this.client.isOpen) await this.client.connect();
     const eventStream = this.getEventStream(streamKeyName);
     
     const results = [];
     for (const event of events) {
       try {
-        await eventStream.publish(event.event, event.aggregateId, event.payload);
+        await eventStream.publish(event.event, event.aggregateId, event.payload, event.headers);
         results.push({ success: true, event });
         if (this.enableMetrics) {
           if (!this.metrics.streams[streamKeyName]) {
@@ -1004,5 +1005,178 @@ export class RedisClient {
       errors: metrics.errors,
       avgProcessingTime
     };
+  }
+
+  /**
+   * Add member(s) to a sorted set
+   * @param {string} key - Sorted set key
+   * @param {Array<{score: number, value: string}>|{score: number, value: string}} members - Member(s) to add
+   * @returns {Promise<number>} Number of elements added
+   */
+  async zadd(key: string, members: Array<{score: number, value: string}> | {score: number, value: string}): Promise<number> {
+    if (!this.client.isOpen) await this.client.connect();
+    const membersArray = Array.isArray(members) ? members : [members];
+    return this.executeWithMiddleware('zadd', [key, membersArray], () => 
+      this.trackMetrics('zadd', () => this.client.zAdd(key, membersArray))
+    );
+  }
+
+  /**
+   * Get range of members from sorted set
+   * @param {string} key - Sorted set key
+   * @param {number} start - Start index
+   * @param {number} stop - Stop index
+   * @param {boolean} [withScores=false] - Include scores in result
+   * @returns {Promise<string[]|Array<{value: string, score: number}>>} Array of members or members with scores
+   */
+  async zrange(key: string, start: number, stop: number, withScores: boolean = false): Promise<string[] | Array<{value: string, score: number}>> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('zrange', [key, start, stop, withScores], () => 
+      this.trackMetrics('zrange', () => 
+        withScores ? this.client.zRangeWithScores(key, start, stop) : this.client.zRange(key, start, stop)
+      )
+    );
+  }
+
+  /**
+   * Push element(s) to the left of a list
+   * @param {string} key - List key
+   * @param {string|string[]} element - Element(s) to push
+   * @returns {Promise<number>} Length of list after push
+   */
+  async lpush(key: string, element: string | string[]): Promise<number> {
+    if (!this.client.isOpen) await this.client.connect();
+    const elements = Array.isArray(element) ? element : [element];
+    return this.executeWithMiddleware('lpush', [key, elements], () => 
+      this.trackMetrics('lpush', () => this.client.lPush(key, elements))
+    );
+  }
+
+  /**
+   * Push element(s) to the right of a list
+   * @param {string} key - List key
+   * @param {string|string[]} element - Element(s) to push
+   * @returns {Promise<number>} Length of list after push
+   */
+  async rpush(key: string, element: string | string[]): Promise<number> {
+    if (!this.client.isOpen) await this.client.connect();
+    const elements = Array.isArray(element) ? element : [element];
+    return this.executeWithMiddleware('rpush', [key, elements], () => 
+      this.trackMetrics('rpush', () => this.client.rPush(key, elements))
+    );
+  }
+
+  /**
+   * Pop element from the left of a list
+   * @param {string} key - List key
+   * @returns {Promise<string|null>} Popped element or null if list is empty
+   */
+  async lpop(key: string): Promise<string | null> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('lpop', [key], () => 
+      this.trackMetrics('lpop', () => this.client.lPop(key))
+    );
+  }
+
+  /**
+   * Pop element from the right of a list
+   * @param {string} key - List key
+   * @returns {Promise<string|null>} Popped element or null if list is empty
+   */
+  async rpop(key: string): Promise<string | null> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('rpop', [key], () => 
+      this.trackMetrics('rpop', () => this.client.rPop(key))
+    );
+  }
+
+  /**
+   * Get the length of a list
+   * @param {string} key - List key
+   * @returns {Promise<number>} Length of the list
+   */
+  async llen(key: string): Promise<number> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('llen', [key], () => 
+      this.trackMetrics('llen', () => this.client.lLen(key))
+    );
+  }
+
+  /**
+   * Get range of elements from a list
+   * @param {string} key - List key
+   * @param {number} start - Start index
+   * @param {number} stop - Stop index
+   * @returns {Promise<string[]>} Array of elements
+   */
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('lrange', [key, start, stop], () => 
+      this.trackMetrics('lrange', () => this.client.lRange(key, start, stop))
+    );
+  }
+
+  /**
+   * Check if member exists in a set
+   * @param {string} key - Set key
+   * @param {string} member - Member to check
+   * @returns {Promise<boolean>} True if member exists
+   */
+  async sismember(key: string, member: string): Promise<boolean> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('sismember', [key, member], () => 
+      this.trackMetrics('sismember', () => this.client.sIsMember(key, member))
+    );
+  }
+
+  /**
+   * Get the number of members in a set
+   * @param {string} key - Set key
+   * @returns {Promise<number>} Number of members
+   */
+  async scard(key: string): Promise<number> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('scard', [key], () => 
+      this.trackMetrics('scard', () => this.client.sCard(key))
+    );
+  }
+
+  /**
+   * Remove specified member from sorted set
+   * @param {string} key - Sorted set key
+   * @param {string|string[]} member - Member(s) to remove
+   * @returns {Promise<number>} Number of members removed
+   */
+  async zrem(key: string, member: string | string[]): Promise<number> {
+    if (!this.client.isOpen) await this.client.connect();
+    const members = Array.isArray(member) ? member : [member];
+    return this.executeWithMiddleware('zrem', [key, members], () => 
+      this.trackMetrics('zrem', () => this.client.zRem(key, members))
+    );
+  }
+
+  /**
+   * Get the score of a member in a sorted set
+   * @param {string} key - Sorted set key
+   * @param {string} member - Member to get score for
+   * @returns {Promise<number|null>} Score or null if member doesn't exist
+   */
+  async zscore(key: string, member: string): Promise<number | null> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('zscore', [key, member], () => 
+      this.trackMetrics('zscore', () => this.client.zScore(key, member))
+    );
+  }
+
+  /**
+   * Get the number of members in a sorted set
+   * @param {string} key - Sorted set key
+   * @returns {Promise<number>} Number of members
+   */
+  async zcard(key: string): Promise<number> {
+    if (!this.client.isOpen) await this.client.connect();
+    return this.executeWithMiddleware('zcard', [key], () => 
+      this.trackMetrics('zcard', () => this.client.zCard(key))
+    );
   }
 }
