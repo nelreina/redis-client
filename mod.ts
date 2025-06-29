@@ -421,11 +421,11 @@ export class RedisClient {
    * @param {string} streamKeyName - Stream key name
    * @param {string} event - Event type
    * @param {string} aggregateId - Aggregate identifier
-   * @param {any} payload - Event payload
    * @param {Record<string, string>} headers - Required headers
+   * @param {any} payload - Event payload
    * @returns {Promise<void>}
    */
-  async publishToStream(streamKeyName: string, event: string, aggregateId: string, payload: any, headers: Record<string, string>): Promise<void> {
+  async publishToStream(streamKeyName: string, event: string, aggregateId: string, headers: Record<string, string>, payload: any): Promise<void> {
     if (!this.client.isOpen) await this.client.connect();
     const eventStream = this.getEventStream(streamKeyName);
     
