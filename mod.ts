@@ -310,11 +310,11 @@ export class RedisClient {
 
   /**
    * Gets or creates a Redis Stream Event instance
-   * @param {string} streamKeyName - Stream key name
+   * @param {string|string[]} streamKeyName - Stream key name or array of stream key names
    * @param {Object} [streamOptions={}] - Stream configuration options
    * @returns {RedisStreamEvent} Redis Stream Event instance
    */
-  getEventStream(streamKeyName: string, streamOptions: any = {}): RedisStreamEvent {
+  getEventStream(streamKeyName: string | string[], streamOptions: any = {}): RedisStreamEvent {
     const options = {
       timeZone: this.timeZone,
       maxLength: this.streamMaxLength,
@@ -322,15 +322,12 @@ export class RedisClient {
       ...streamOptions
     };
     
-    if (!this.eventStream) {
-      return new RedisStreamEvent(
-        this.client as any,
-        streamKeyName,
-        this.serviceName,
-        options,
-      );
-    }
-    return this.eventStream;
+    return new RedisStreamEvent(
+      this.client as any,
+      streamKeyName,
+      this.serviceName,
+      options,
+    );
   }
 
   /**
@@ -417,6 +414,48 @@ export class RedisClient {
   }
 
   /**
+   * Connects to multiple Redis Streams and sets up event handling
+   * @param {string[]} streamKeyNames - Array of stream key names
+   * @param {Object|((event: any) => void|Promise<void>)} [options={}] - Configuration options or handler function
+   * @param {boolean|Array<string>} [events=false] - Events to filter (true for all events)
+   * @param {string} [startID="$"] - Start ID for the stream
+   * @returns {Promise<void>}
+   */
+  async connectToMultipleEventStreams(
+    streamKeyNames: string[],
+    options: any = {},
+    events: boolean | string[] = false,
+    startID: string = "$",
+  ): Promise<void> {
+    let handler;
+    let streamOptions = {
+      timeZone: this.timeZone,
+      maxLength: this.streamMaxLength,
+      consumer: this.streamConsumerName,
+      startID,
+    };
+
+    if (typeof options === 'function') {
+      handler = options;
+    } else {
+      handler = options.handler || ((str: any) => console.info(str));
+      streamOptions = {
+        ...streamOptions,
+        ...options,
+        startID: options.startID || startID,
+      };
+      events = options.events !== undefined ? options.events : events;
+    }
+
+    this.eventStream = this.getEventStream(streamKeyNames, streamOptions);
+
+    if (!this.client.isOpen) await this.client.connect();
+    
+    const stream = await (this.eventStream as any).createStream();
+    await stream.subscribe(handler, events as any);
+  }
+
+  /**
    * Publishes an event to a Redis Stream
    * @param {string} streamKeyName - Stream key name
    * @param {string} event - Event type
@@ -430,7 +469,7 @@ export class RedisClient {
     const eventStream = this.getEventStream(streamKeyName);
     
     try {
-      await eventStream.publish(event, aggregateId, payload, headers);
+      await eventStream.publish(event, aggregateId, payload, headers, streamKeyName);
       if (this.enableMetrics) {
         if (!this.metrics.streams[streamKeyName]) {
           this.metrics.streams[streamKeyName] = { published: 0, consumed: 0, errors: 0 };

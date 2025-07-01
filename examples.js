@@ -158,6 +158,67 @@ async function errorHandlingExample() {
   });
 }
 
+// Example 9: Multi-Stream Subscription
+async function multiStreamExample() {
+  // Connect to multiple streams with a single connection
+  await redis.connectToMultipleEventStreams(
+    ["orders", "payments", "inventory", "shipping"],
+    {
+      handler: async (event) => {
+        console.log(`Received ${event.event} from aggregate ${event.aggregateId}`);
+        
+        // Process based on event type
+        switch (event.event) {
+          case "order-created":
+            console.log("New order:", event.payload);
+            // Publish to inventory stream
+            await redis.publishToStream("inventory", "reserve-items", event.aggregateId, 
+              { orderId: event.aggregateId }, event.payload.items);
+            break;
+            
+          case "payment-completed":
+            console.log("Payment received:", event.payload);
+            // Publish to shipping stream
+            await redis.publishToStream("shipping", "prepare-shipment", event.aggregateId,
+              { orderId: event.payload.orderId }, { priority: "standard" });
+            break;
+            
+          case "inventory-reserved":
+            console.log("Inventory reserved:", event.payload);
+            break;
+            
+          case "shipment-prepared":
+            console.log("Shipment ready:", event.payload);
+            break;
+        }
+      },
+      events: ["order-created", "payment-completed", "inventory-reserved", "shipment-prepared"],
+      consumer: "multi-processor",
+      autoAck: true
+    }
+  );
+  
+  // Publish events to different streams
+  console.log("\nPublishing events to multiple streams:");
+  
+  // Create an order
+  await redis.publishToStream("orders", "order-created", "order-123", 
+    { customerId: "customer-456" }, 
+    { items: ["product-1", "product-2"], total: 150.00 }
+  );
+  console.log("Published order-created to orders stream");
+  
+  // Process payment
+  await redis.publishToStream("payments", "payment-completed", "payment-789",
+    { orderId: "order-123" },
+    { amount: 150.00, method: "credit-card" }
+  );
+  console.log("Published payment-completed to payments stream");
+  
+  // Wait a bit to see the events being processed
+  await new Promise(resolve => setTimeout(resolve, 2000));
+}
+
 // Run examples
 async function main() {
   try {
@@ -167,6 +228,7 @@ async function main() {
     await scanExample();
     await monitoringExample();
     await errorHandlingExample();
+    await multiStreamExample();
     
     // Cleanup
     await redis.close();
