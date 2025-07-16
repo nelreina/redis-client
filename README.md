@@ -41,6 +41,7 @@ const redis = new RedisClient({
   enableMetrics: true, // Enable metrics collection
   connectionRetries: 3, // Retry connection 3 times
   connectionRetryDelay: 1000, // Wait 1s between retries
+  logger: customLogger, // Optional: pass custom logger
 });
 
 // Fluent configuration
@@ -49,6 +50,14 @@ const redis = new RedisClient({ redisHost: "localhost" })
   .withRetries(3, 2000)
   .withMetrics(true)
   .withLogger(customLogger);
+
+// Custom logger example
+const customLogger = {
+  info: (message, ...args) => console.log(`[INFO] ${message}`, ...args),
+  error: (message, ...args) => console.error(`[ERROR] ${message}`, ...args),
+  warn: (message, ...args) => console.warn(`[WARN] ${message}`, ...args),
+  debug: (message, ...args) => console.debug(`[DEBUG] ${message}`, ...args),
+};
 ```
 
 ### Pub/Sub Operations

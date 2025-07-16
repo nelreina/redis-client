@@ -14,6 +14,7 @@ interface RedisClientConfig {
   connectionRetries?: number;
   connectionRetryDelay?: number;
   poolSize?: number;
+  logger?: Logger;
 }
 
 interface Logger {
@@ -87,6 +88,7 @@ export class RedisClient {
    * @param {string} [config.timeZone="America/Curacao"] - Timezone for event timestamps
    * @param {number} [config.streamMaxLength=10000] - Maximum length of the stream
    * @param {string} [config.streamConsumerName="consumer-1"] - Name of the stream consumer
+   * @param {Logger} [config.logger] - Custom logger instance
    */
   constructor(config: RedisClientConfig) {
     const {
@@ -102,6 +104,7 @@ export class RedisClient {
       connectionRetries = 3,
       connectionRetryDelay = 1000,
       poolSize = 1,
+      logger,
     } = config;
     this.url = this.buildRedisUrl(redisHost, redisPort, redisUser, redisPw);
     this.serviceName = serviceName;
@@ -114,7 +117,7 @@ export class RedisClient {
     this.poolSize = poolSize;
     
     this.middleware = [];
-    this.logger = console;
+    this.logger = logger || console;
     this.metrics = {
       operations: { total: 0, successful: 0, failed: 0 },
       latency: { values: [] },
