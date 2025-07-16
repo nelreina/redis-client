@@ -1,10 +1,10 @@
 {
   "name": "@nelreina/redis-client",
-  "version": "0.8.1",
+  "version": "0.8.5",
   "license": "MIT",
   "exports": "./mod.ts",
   "imports": {
-    "@nelreina/redis-stream-event": "jsr:@nelreina/redis-stream-event@^0.8.0",
+    "@nelreina/redis-stream-event": "jsr:@nelreina/redis-stream-event@^0.8.5",
     "redis": "npm:redis@^4.7.0"
   }
 }
