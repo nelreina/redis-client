@@ -1,8 +1,9 @@
 # Redis Client Wrapper v2
 
-A powerful and feature-rich Redis client wrapper for Deno applications with v2 API improvements.
-Built on top of `node-redis`, this library simplifies Redis operations while adding advanced features
-like middleware support, metrics collection, batch operations, and enhanced stream processing.
+A powerful and feature-rich Redis client wrapper for Deno applications with v2
+API improvements. Built on top of `node-redis`, this library simplifies Redis
+operations while adding advanced features like middleware support, metrics
+collection, batch operations, and enhanced stream processing.
 
 ## Features
 

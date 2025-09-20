@@ -1,7 +1,7 @@
 {
-  "version": "4",
+  "version": "5",
   "specifiers": {
-    "jsr:@nelreina/redis-stream-event@0.6": "0.6.0",
+    "jsr:@nelreina/redis-stream-event@~0.10.2": "0.10.2",
     "npm:@types/node@*": "22.5.4",
     "npm:redis@^4.7.0": "4.7.0_@redis+client@1.6.0"
   },
@@ -12,8 +12,8 @@
     "@nelreina/redis-stream-event@0.3.0": {
       "integrity": "c5ce63ad736606626815abd9bf7ec9be0435f914ebfe44606debb9beb3e1f244"
     },
-    "@nelreina/redis-stream-event@0.6.0": {
-      "integrity": "b1fbbe7fe67c7c633b6fc1464097585e431c4f948d9c65e38faf8b17734ad92c"
+    "@nelreina/redis-stream-event@0.10.2": {
+      "integrity": "11a8241d8d26dac085c2646f8a2275d6a3c24b6e5477ac8c2069b27977192b16"
     }
   },
   "npm": {
@@ -87,7 +87,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@nelreina/redis-stream-event@0.6",
+      "jsr:@nelreina/redis-stream-event@~0.10.2",
       "npm:redis@^4.7.0"
     ]
   }

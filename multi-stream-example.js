@@ -10,20 +10,20 @@ async function main() {
     redisPort: 6379,
     serviceName: "multi-stream-demo",
     streamMaxLength: 1000,
-    streamConsumerName: "demo-consumer"
+    streamConsumerName: "demo-consumer",
   })
-  .withMetrics(true)
-  .withLogger({
-    info: (msg) => console.log(`[INFO] ${msg}`),
-    error: (msg) => console.error(`[ERROR] ${msg}`),
-    warn: (msg) => console.warn(`[WARN] ${msg}`),
-    debug: (msg) => console.debug(`[DEBUG] ${msg}`)
-  });
+    .withMetrics(true)
+    .withLogger({
+      info: (msg) => console.log(`[INFO] ${msg}`),
+      error: (msg) => console.error(`[ERROR] ${msg}`),
+      warn: (msg) => console.warn(`[WARN] ${msg}`),
+      debug: (msg) => console.debug(`[DEBUG] ${msg}`),
+    });
 
   try {
     // Example 1: Basic Multi-Stream Subscription
     console.log("=== Example 1: Basic Multi-Stream Subscription ===\n");
-    
+
     await redis.connectToMultipleEventStreams(
       ["orders", "payments", "inventory", "shipping"],
       {
@@ -36,12 +36,12 @@ async function main() {
           console.log(`  Headers:`, event.headers);
         },
         consumer: "multi-processor",
-        autoAck: true
-      }
+        autoAck: true,
+      },
     );
 
     // Give some time for the connection to establish
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Example 2: Publishing to Different Streams
     console.log("\n=== Example 2: Publishing to Different Streams ===\n");
@@ -51,20 +51,20 @@ async function main() {
       "orders",
       "order.created",
       "order-123",
-      { 
+      {
         userId: "user-456",
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       },
       {
         orderId: "order-123",
         customerId: "customer-789",
         items: [
           { productId: "prod-1", quantity: 2, price: 29.99 },
-          { productId: "prod-2", quantity: 1, price: 49.99 }
+          { productId: "prod-2", quantity: 1, price: 49.99 },
         ],
         total: 109.97,
-        currency: "USD"
-      }
+        currency: "USD",
+      },
     );
     console.log("✅ Published order.created to orders stream");
 
@@ -75,7 +75,7 @@ async function main() {
       "payment-456",
       {
         orderId: "order-123",
-        userId: "user-456"
+        userId: "user-456",
       },
       {
         paymentId: "payment-456",
@@ -84,9 +84,9 @@ async function main() {
         method: "credit-card",
         card: {
           last4: "1234",
-          brand: "visa"
-        }
-      }
+          brand: "visa",
+        },
+      },
     );
     console.log("✅ Published payment.initiated to payments stream");
 
@@ -97,29 +97,31 @@ async function main() {
       "inv-check-789",
       {
         orderId: "order-123",
-        warehouse: "warehouse-1"
+        warehouse: "warehouse-1",
       },
       {
         items: [
           { productId: "prod-1", required: 2, available: 10 },
-          { productId: "prod-2", required: 1, available: 5 }
+          { productId: "prod-2", required: 1, available: 5 },
         ],
-        status: "available"
-      }
+        status: "available",
+      },
     );
     console.log("✅ Published inventory.check to inventory stream");
 
     // Wait a bit to see events being processed
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Example 3: Advanced Multi-Stream with Event Filtering
-    console.log("\n=== Example 3: Advanced Multi-Stream with Event Filtering ===\n");
+    console.log(
+      "\n=== Example 3: Advanced Multi-Stream with Event Filtering ===\n",
+    );
 
     // Create another connection that only listens to specific events
     const redis2 = new RedisClient({
       redisHost: "localhost",
       redisPort: 6379,
-      serviceName: "filtered-processor"
+      serviceName: "filtered-processor",
     });
 
     await redis2.connectToMultipleEventStreams(
@@ -127,7 +129,7 @@ async function main() {
       {
         handler: async (event) => {
           console.log(`\n🎯 Filtered Event: ${event.event}`);
-          
+
           // Process based on event type
           if (event.event === "order.created") {
             // Trigger payment processing
@@ -136,14 +138,14 @@ async function main() {
               "payment.requested",
               `payment-${Date.now()}`,
               { orderId: event.aggregateId },
-              { 
+              {
                 amount: event.payload.total,
-                currency: event.payload.currency
-              }
+                currency: event.payload.currency,
+              },
             );
             console.log("  → Triggered payment request");
           }
-          
+
           if (event.event === "payment.completed") {
             // Trigger shipping
             await redis.publishToStream(
@@ -153,16 +155,16 @@ async function main() {
               { orderId: event.headers.orderId },
               {
                 orderId: event.headers.orderId,
-                address: "123 Main St, City, Country"
-              }
+                address: "123 Main St, City, Country",
+              },
             );
             console.log("  → Triggered shipment request");
           }
         },
         events: ["order.created", "payment.completed"], // Only listen to these events
         consumer: "workflow-processor",
-        autoAck: true
-      }
+        autoAck: true,
+      },
     );
 
     // Simulate payment completion
@@ -172,17 +174,17 @@ async function main() {
       "payment-456",
       {
         orderId: "order-123",
-        userId: "user-456"
+        userId: "user-456",
       },
       {
         paymentId: "payment-456",
         transactionId: "txn-987654",
-        status: "success"
-      }
+        status: "success",
+      },
     );
     console.log("\n✅ Published payment.completed to trigger workflow");
 
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Example 4: Stream Health Monitoring
     console.log("\n=== Example 4: Stream Health Monitoring ===\n");
@@ -210,32 +212,31 @@ async function main() {
         event: "order.item.packed",
         aggregateId: "order-123",
         headers: { warehouse: "warehouse-1" },
-        payload: { productId: "prod-1", packedAt: new Date().toISOString() }
+        payload: { productId: "prod-1", packedAt: new Date().toISOString() },
       },
       {
         event: "order.item.packed",
         aggregateId: "order-123",
         headers: { warehouse: "warehouse-1" },
-        payload: { productId: "prod-2", packedAt: new Date().toISOString() }
+        payload: { productId: "prod-2", packedAt: new Date().toISOString() },
       },
       {
         event: "order.ready.ship",
         aggregateId: "order-123",
         headers: { warehouse: "warehouse-1" },
-        payload: { allItemsPacked: true, readyAt: new Date().toISOString() }
-      }
+        payload: { allItemsPacked: true, readyAt: new Date().toISOString() },
+      },
     ]);
 
     console.log("Batch publish results:", batchResults);
 
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Cleanup
     console.log("\n=== Cleanup ===");
     await redis.close();
     await redis2.close();
     console.log("✅ Connections closed");
-
   } catch (error) {
     console.error("❌ Error in example:", error);
     await redis.close();

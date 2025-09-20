@@ -2,44 +2,56 @@
 
 ## Project Overview
 
-This is a utility library built on top of the `node-redis` library that simplifies and streamlines the most commonly used Redis operations. The library aims to provide a more developer-friendly API while maintaining the full power and flexibility of Redis.
+This is a utility library built on top of the `node-redis` library that
+simplifies and streamlines the most commonly used Redis operations. The library
+aims to provide a more developer-friendly API while maintaining the full power
+and flexibility of Redis.
 
 ## Key Dependencies
 
 - **node-redis**: The underlying Redis client library
-- **redis-event-stream**: A recently improved custom library for Redis event streaming functionality
+- **redis-event-stream**: A recently improved custom library for Redis event
+  streaming functionality
 
 ## Primary Goals
 
 1. **API Simplification**: Reduce boilerplate code for common Redis operations
-2. **Developer Experience**: Provide intuitive method names and consistent error handling
+2. **Developer Experience**: Provide intuitive method names and consistent error
+   handling
 3. **Performance**: Maintain or improve upon node-redis performance
 4. **Type Safety**: Ensure robust TypeScript support (if applicable)
-5. **Event Streaming**: Integrate seamlessly with redis-event-stream for real-time capabilities
+5. **Event Streaming**: Integrate seamlessly with redis-event-stream for
+   real-time capabilities
 
 ## Areas for Analysis and Improvement
 
 ### API Design Review
+
 - **Method Naming**: Evaluate current method names for clarity and consistency
-- **Parameter Structure**: Review function signatures for optimal developer experience
+- **Parameter Structure**: Review function signatures for optimal developer
+  experience
 - **Return Values**: Ensure consistent and predictable return patterns
 - **Error Handling**: Standardize error responses across all methods
 - **Async Patterns**: Verify proper Promise/async-await implementation
 
 ### Performance Optimization
+
 - **Connection Management**: Analyze connection pooling and reuse strategies
 - **Pipeline Operations**: Identify opportunities for Redis pipelining
 - **Memory Usage**: Review data structures and caching mechanisms
 - **Batch Operations**: Optimize bulk operations where applicable
 
 ### Code Quality Improvements
+
 - **Architecture**: Evaluate overall code organization and modularity
 - **Documentation**: Improve inline documentation and examples
 - **Testing**: Identify gaps in test coverage
 - **Configuration**: Review configuration management and defaults
 
 ### Integration Enhancement
-- **redis-event-stream Integration**: Optimize the integration with the event streaming library
+
+- **redis-event-stream Integration**: Optimize the integration with the event
+  streaming library
 - **Error Propagation**: Ensure seamless error handling between libraries
 - **Event Handling**: Review event-driven patterns and implementations
 
@@ -59,18 +71,21 @@ Please analyze how well the current implementation handles these scenarios:
 ## Technical Considerations
 
 ### Performance Metrics
+
 - Latency for common operations
 - Memory footprint
 - Connection overhead
 - Throughput for bulk operations
 
 ### Reliability Features
+
 - Connection retry logic
 - Graceful degradation
 - Error recovery mechanisms
 - Health check capabilities
 
 ### Developer Experience
+
 - Intuitive method chaining
 - Clear error messages
 - Comprehensive logging options
@@ -79,18 +94,21 @@ Please analyze how well the current implementation handles these scenarios:
 ## Expected Improvements
 
 ### API Enhancements
+
 - Simplify complex operations into single method calls
 - Provide sensible defaults for common configurations
 - Implement fluent interfaces where appropriate
 - Add convenience methods for frequent patterns
 
 ### Code Organization
+
 - Modular architecture for better maintainability
 - Clear separation of concerns
 - Consistent coding patterns throughout
 - Proper abstraction layers
 
 ### Documentation and Examples
+
 - Comprehensive API documentation
 - Real-world usage examples
 - Migration guides from node-redis
@@ -102,7 +120,8 @@ Please analyze how well the current implementation handles these scenarios:
 2. **Internal Architecture**: Examine how the library is structured internally
 3. **Error Handling Patterns**: Analyze consistency in error management
 4. **Performance Bottlenecks**: Identify areas where performance can be improved
-5. **redis-event-stream Integration**: Evaluate how well the libraries work together
+5. **redis-event-stream Integration**: Evaluate how well the libraries work
+   together
 6. **Configuration Management**: Review how settings and options are handled
 7. **Testing Strategy**: Assess current testing approach and coverage
 
@@ -115,4 +134,6 @@ Please analyze how well the current implementation handles these scenarios:
 - Are there opportunities to improve type safety and IDE support?
 - How can error handling be made more consistent and informative?
 
-Please analyze the codebase with these considerations in mind and provide specific recommendations for improvements to both the API design and overall implementation quality.
+Please analyze the codebase with these considerations in mind and provide
+specific recommendations for improvements to both the API design and overall
+implementation quality.

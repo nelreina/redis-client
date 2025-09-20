@@ -1,5 +1,7 @@
 import { createClient, type RedisClientType } from "redis";
-import RedisStreamEvent from "@nelreina/redis-stream-event";
+import RedisStreamEvent, {
+  type StreamHealthStatus,
+} from "@nelreina/redis-stream-event";
 
 interface RedisClientConfig {
   redisHost: string;
@@ -27,7 +29,7 @@ interface Logger {
 type MiddlewareFunction = (
   operation: string,
   args: any[],
-  next: () => Promise<any>
+  next: () => Promise<any>,
 ) => Promise<any>;
 
 interface Metrics {
@@ -115,32 +117,32 @@ export class RedisClient {
     this.connectionRetries = connectionRetries;
     this.connectionRetryDelay = connectionRetryDelay;
     this.poolSize = poolSize;
-    
+
     this.middleware = [];
     this.logger = logger || console;
     this.metrics = {
       operations: { total: 0, successful: 0, failed: 0 },
       latency: { values: [] },
-      streams: {}
+      streams: {},
     };
-    
-    this.client = createClient({ 
-      url: this.url, 
+
+    this.client = createClient({
+      url: this.url,
       name: this.serviceName,
       socket: {
         reconnectStrategy: (retries) => {
           if (retries > this.connectionRetries) {
-            return new Error('Max retries reached');
+            return new Error("Max retries reached");
           }
           return Math.min(retries * this.connectionRetryDelay, 5000);
-        }
-      }
+        },
+      },
     });
-    
+
     this.pubsub = this.client.duplicate();
     this.eventStream = null;
     this.streamMetrics = new Map();
-    
+
     this.client.on("connect", () => {
       this.logger.info(`✅ Connected to redis: ${redisHost}`);
     });
@@ -149,7 +151,7 @@ export class RedisClient {
       this.logger.error(`❌ Error connecting to redis: ${this.url}`);
       this.logger.error(error);
     });
-    
+
     if (!this.client.isOpen) this.client.connect();
   }
 
@@ -162,7 +164,12 @@ export class RedisClient {
    * @param {string} [password] - Redis password
    * @returns {string|undefined} Formatted Redis URL or undefined
    */
-  buildRedisUrl(host: string, port: number, user?: string, password?: string): string | undefined {
+  buildRedisUrl(
+    host: string,
+    port: number,
+    user?: string,
+    password?: string,
+  ): string | undefined {
     if (!host) return undefined;
 
     let url = "redis://";
@@ -179,10 +186,13 @@ export class RedisClient {
    * @param {(payload: any) => void} callback - Callback function to handle received messages
    * @returns {Promise<void>}
    */
-  async subscribe2RedisChannel(channel: string, callback: (payload: any) => void): Promise<void> {
+  async subscribe2RedisChannel(
+    channel: string,
+    callback: (payload: any) => void,
+  ): Promise<void> {
     if (!this.pubsub.isOpen) await this.pubsub.connect();
-    return this.executeWithMiddleware('subscribe', [channel], async () => {
-      return this.trackMetrics('subscribe', async () => {
+    return this.executeWithMiddleware("subscribe", [channel], async () => {
+      return this.trackMetrics("subscribe", async () => {
         await this.pubsub.subscribe(channel, (payload) => {
           try {
             callback(JSON.parse(payload));
@@ -204,18 +214,22 @@ export class RedisClient {
    */
   async publish2RedisChannel(channel: string, payload: any): Promise<number> {
     if (!this.pubsub.isOpen) await this.pubsub.connect();
-    return this.executeWithMiddleware('publish', [channel, payload], async () => {
-      return this.trackMetrics('publish', async () => {
-        let message;
-        try {
-          message = JSON.stringify(payload);
-        } catch (error) {
-          message = payload;
-          this.logger.error((error as Error).message);
-        }
-        return await this.pubsub.publish(channel, message);
-      });
-    });
+    return this.executeWithMiddleware(
+      "publish",
+      [channel, payload],
+      async () => {
+        return this.trackMetrics("publish", async () => {
+          let message;
+          try {
+            message = JSON.stringify(payload);
+          } catch (error) {
+            message = payload;
+            this.logger.error((error as Error).message);
+          }
+          return await this.pubsub.publish(channel, message);
+        });
+      },
+    );
   }
 
   /**
@@ -224,15 +238,20 @@ export class RedisClient {
    * @param {Object.<string, any>} object - Object containing field-value pairs
    * @returns {Promise<number>} Number of fields that were added
    */
-  async setHashValue(key: string, object: Record<string, any>): Promise<number> {
+  async setHashValue(
+    key: string,
+    object: Record<string, any>,
+  ): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
     const values = Object.entries(object).reduce((acc: any[], [key, value]) => {
       acc.push(key);
       acc.push(value);
       return acc;
     }, []);
-    return this.executeWithMiddleware('hSet', [key, object], () => 
-      this.trackMetrics('hSet', () => this.client.hSet(key, values))
+    return this.executeWithMiddleware(
+      "hSet",
+      [key, object],
+      () => this.trackMetrics("hSet", () => this.client.hSet(key, values)),
     );
   }
 
@@ -243,17 +262,21 @@ export class RedisClient {
    */
   async getAllSetHashValues(key: string): Promise<Array<Record<string, any>>> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('getAllSetHashValues', [key], async () => {
-      return this.trackMetrics('getAllSetHashValues', async () => {
-        const keys = await this.client.sMembers(key);
-        const values = [];
-        for (const key of keys) {
-          const data = { event: key, ...(await this.client.hGetAll(key)) };
-          values.push(data);
-        }
-        return values;
-      });
-    });
+    return this.executeWithMiddleware(
+      "getAllSetHashValues",
+      [key],
+      async () => {
+        return this.trackMetrics("getAllSetHashValues", async () => {
+          const keys = await this.client.sMembers(key);
+          const values = [];
+          for (const key of keys) {
+            const data = { event: key, ...(await this.client.hGetAll(key)) };
+            values.push(data);
+          }
+          return values;
+        });
+      },
+    );
   }
 
   /**
@@ -263,15 +286,23 @@ export class RedisClient {
    * @param {string} value - String value
    * @returns {Promise<boolean>} Operation success status
    */
-  async setStringValue(setKey: string, key: string, value: string): Promise<boolean> {
+  async setStringValue(
+    setKey: string,
+    key: string,
+    value: string,
+  ): Promise<boolean> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('setStringValue', [setKey, key, value], async () => {
-      return this.trackMetrics('setStringValue', async () => {
-        await this.client.set(key, value);
-        await this.client.sAdd(setKey, key);
-        return true;
-      });
-    });
+    return this.executeWithMiddleware(
+      "setStringValue",
+      [setKey, key, value],
+      async () => {
+        return this.trackMetrics("setStringValue", async () => {
+          await this.client.set(key, value);
+          await this.client.sAdd(setKey, key);
+          return true;
+        });
+      },
+    );
   }
 
   /**
@@ -281,16 +312,20 @@ export class RedisClient {
    */
   async getAllStringValues(setKey: string): Promise<Array<string | null>> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('getAllStringValues', [setKey], async () => {
-      return this.trackMetrics('getAllStringValues', async () => {
-        const keys = await this.client.sMembers(setKey);
-        const values = [];
-        for (const key of keys) {
-          values.push(await this.client.get(key));
-        }
-        return values;
-      });
-    });
+    return this.executeWithMiddleware(
+      "getAllStringValues",
+      [setKey],
+      async () => {
+        return this.trackMetrics("getAllStringValues", async () => {
+          const keys = await this.client.sMembers(setKey);
+          const values = [];
+          for (const key of keys) {
+            values.push(await this.client.get(key));
+          }
+          return values;
+        });
+      },
+    );
   }
 
   /**
@@ -300,15 +335,19 @@ export class RedisClient {
    */
   async clearStringValues(setKey: string): Promise<boolean> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('clearStringValues', [setKey], async () => {
-      return this.trackMetrics('clearStringValues', async () => {
-        const keys = await this.client.sMembers(setKey);
-        for (const key of keys) {
-          await this.client.del(key);
-        }
-        return true;
-      });
-    });
+    return this.executeWithMiddleware(
+      "clearStringValues",
+      [setKey],
+      async () => {
+        return this.trackMetrics("clearStringValues", async () => {
+          const keys = await this.client.sMembers(setKey);
+          for (const key of keys) {
+            await this.client.del(key);
+          }
+          return true;
+        });
+      },
+    );
   }
 
   /**
@@ -317,14 +356,17 @@ export class RedisClient {
    * @param {Object} [streamOptions={}] - Stream configuration options
    * @returns {RedisStreamEvent} Redis Stream Event instance
    */
-  getEventStream(streamKeyName: string | string[], streamOptions: any = {}): RedisStreamEvent {
+  getEventStream(
+    streamKeyName: string | string[],
+    streamOptions: any = {},
+  ): RedisStreamEvent {
     const options = {
       timeZone: this.timeZone,
       maxLength: this.streamMaxLength,
       consumer: this.streamConsumerName,
-      ...streamOptions
+      ...streamOptions,
     };
-    
+
     return new RedisStreamEvent(
       this.client as any,
       streamKeyName,
@@ -355,7 +397,7 @@ export class RedisClient {
       startID,
     };
 
-    if (typeof options === 'function') {
+    if (typeof options === "function") {
       handler = options;
     } else {
       handler = options.handler || ((str: any) => console.info(str));
@@ -370,23 +412,27 @@ export class RedisClient {
     this.eventStream = this.getEventStream(streamKeyName, streamOptions);
 
     if (!this.client.isOpen) await this.client.connect();
-    
+
     const wrappedHandler = async (event: any) => {
       const start = Date.now();
       try {
         await handler(event);
         if (this.enableMetrics) {
           if (!this.metrics.streams[streamKeyName]) {
-            this.metrics.streams[streamKeyName] = { published: 0, consumed: 0, errors: 0 };
+            this.metrics.streams[streamKeyName] = {
+              published: 0,
+              consumed: 0,
+              errors: 0,
+            };
           }
           this.metrics.streams[streamKeyName].consumed++;
-          
+
           if (!this.streamMetrics.has(streamKeyName)) {
             this.streamMetrics.set(streamKeyName, {
               published: 0,
               consumed: 0,
               errors: 0,
-              processingTimes: []
+              processingTimes: [],
             });
           }
           const metrics = this.streamMetrics.get(streamKeyName);
@@ -401,14 +447,18 @@ export class RedisClient {
       } catch (error) {
         if (this.enableMetrics) {
           if (!this.metrics.streams[streamKeyName]) {
-            this.metrics.streams[streamKeyName] = { published: 0, consumed: 0, errors: 0 };
+            this.metrics.streams[streamKeyName] = {
+              published: 0,
+              consumed: 0,
+              errors: 0,
+            };
           }
           this.metrics.streams[streamKeyName].errors++;
         }
         throw error;
       }
     };
-    
+
     const stream = await (this.eventStream as any).createStream(
       streamKeyName,
       this.serviceName,
@@ -438,7 +488,7 @@ export class RedisClient {
       startID,
     };
 
-    if (typeof options === 'function') {
+    if (typeof options === "function") {
       handler = options;
     } else {
       handler = options.handler || ((str: any) => console.info(str));
@@ -453,7 +503,7 @@ export class RedisClient {
     this.eventStream = this.getEventStream(streamKeyNames, streamOptions);
 
     if (!this.client.isOpen) await this.client.connect();
-    
+
     const stream = await (this.eventStream as any).createStream();
     await stream.subscribe(handler, events as any);
   }
@@ -467,24 +517,40 @@ export class RedisClient {
    * @param {any} payload - Event payload
    * @returns {Promise<void>}
    */
-  async publishToStream(streamKeyName: string, event: string, aggregateId: string, headers: Record<string, string>, payload: any): Promise<void> {
+  async publishToStream(
+    streamKeyName: string,
+    event: string,
+    aggregateId: string,
+    headers: Record<string, string>,
+    payload: any,
+  ): Promise<void> {
     if (!this.client.isOpen) await this.client.connect();
     const eventStream = this.getEventStream(streamKeyName);
-    
+
     try {
-      await eventStream.publish(event, aggregateId, payload, headers, streamKeyName);
+      await eventStream.publish(
+        event,
+        aggregateId,
+        payload,
+        headers,
+        streamKeyName,
+      );
       if (this.enableMetrics) {
         if (!this.metrics.streams[streamKeyName]) {
-          this.metrics.streams[streamKeyName] = { published: 0, consumed: 0, errors: 0 };
+          this.metrics.streams[streamKeyName] = {
+            published: 0,
+            consumed: 0,
+            errors: 0,
+          };
         }
         this.metrics.streams[streamKeyName].published++;
-        
+
         if (!this.streamMetrics.has(streamKeyName)) {
           this.streamMetrics.set(streamKeyName, {
             published: 0,
             consumed: 0,
             errors: 0,
-            processingTimes: []
+            processingTimes: [],
           });
         }
         const metrics = this.streamMetrics.get(streamKeyName);
@@ -495,7 +561,11 @@ export class RedisClient {
     } catch (error) {
       if (this.enableMetrics) {
         if (!this.metrics.streams[streamKeyName]) {
-          this.metrics.streams[streamKeyName] = { published: 0, consumed: 0, errors: 0 };
+          this.metrics.streams[streamKeyName] = {
+            published: 0,
+            consumed: 0,
+            errors: 0,
+          };
         }
         this.metrics.streams[streamKeyName].errors++;
       }
@@ -510,8 +580,10 @@ export class RedisClient {
    */
   async get(key: string): Promise<string | null> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('get', [key], () => 
-      this.trackMetrics('get', () => this.client.get(key))
+    return this.executeWithMiddleware(
+      "get",
+      [key],
+      () => this.trackMetrics("get", () => this.client.get(key)),
     );
   }
 
@@ -524,10 +596,17 @@ export class RedisClient {
    */
   async set(key: string, value: string, options?: any): Promise<string | null> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('set', [key, value, options], () => 
-      this.trackMetrics('set', () => 
-        options ? this.client.set(key, value, options) : this.client.set(key, value)
-      )
+    return this.executeWithMiddleware(
+      "set",
+      [key, value, options],
+      () =>
+        this.trackMetrics(
+          "set",
+          () =>
+            options
+              ? this.client.set(key, value, options)
+              : this.client.set(key, value),
+        ),
     );
   }
 
@@ -555,8 +634,10 @@ export class RedisClient {
    */
   async incrBy(key: string, value: number): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('incrBy', [key, value], () => 
-      this.trackMetrics('incrBy', () => this.client.incrBy(key, value))
+    return this.executeWithMiddleware(
+      "incrBy",
+      [key, value],
+      () => this.trackMetrics("incrBy", () => this.client.incrBy(key, value)),
     );
   }
 
@@ -629,14 +710,18 @@ export class RedisClient {
    * @param {() => Promise<any>} fn - Function to execute
    * @returns {Promise<any>} Operation result
    */
-  private async executeWithMiddleware(operation: string, args: any[], fn: () => Promise<any>): Promise<any> {
+  private async executeWithMiddleware(
+    operation: string,
+    args: any[],
+    fn: () => Promise<any>,
+  ): Promise<any> {
     if (!this.middleware.length) {
       return fn();
     }
 
     let index = -1;
     const dispatch = async (i: number): Promise<any> => {
-      if (i <= index) throw new Error('next() called multiple times');
+      if (i <= index) throw new Error("next() called multiple times");
       index = i;
       let fn: any = this.middleware[i];
       if (i === this.middleware.length) fn = async () => fn();
@@ -654,12 +739,15 @@ export class RedisClient {
    * @param {() => Promise<any>} fn - Function to track
    * @returns {Promise<any>} Function result
    */
-  private async trackMetrics(operation: string, fn: () => Promise<any>): Promise<any> {
+  private async trackMetrics(
+    operation: string,
+    fn: () => Promise<any>,
+  ): Promise<any> {
     if (!this.enableMetrics) return fn();
-    
+
     const start = Date.now();
     this.metrics.operations.total++;
-    
+
     try {
       const result = await fn();
       this.metrics.operations.successful++;
@@ -682,8 +770,10 @@ export class RedisClient {
    */
   async exists(key: string | string[]): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('exists', [key], () => 
-      this.trackMetrics('exists', () => this.client.exists(key))
+    return this.executeWithMiddleware(
+      "exists",
+      [key],
+      () => this.trackMetrics("exists", () => this.client.exists(key)),
     );
   }
 
@@ -695,8 +785,10 @@ export class RedisClient {
   async del(key: string | string[]): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
     const keys = Array.isArray(key) ? key : [key];
-    return this.executeWithMiddleware('del', keys, () => 
-      this.trackMetrics('del', () => this.client.del(keys))
+    return this.executeWithMiddleware(
+      "del",
+      keys,
+      () => this.trackMetrics("del", () => this.client.del(keys)),
     );
   }
 
@@ -708,8 +800,10 @@ export class RedisClient {
    */
   async expire(key: string, seconds: number): Promise<boolean> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('expire', [key, seconds], () => 
-      this.trackMetrics('expire', () => this.client.expire(key, seconds))
+    return this.executeWithMiddleware(
+      "expire",
+      [key, seconds],
+      () => this.trackMetrics("expire", () => this.client.expire(key, seconds)),
     );
   }
 
@@ -720,8 +814,10 @@ export class RedisClient {
    */
   async ttl(key: string): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('ttl', [key], () => 
-      this.trackMetrics('ttl', () => this.client.ttl(key))
+    return this.executeWithMiddleware(
+      "ttl",
+      [key],
+      () => this.trackMetrics("ttl", () => this.client.ttl(key)),
     );
   }
 
@@ -731,13 +827,16 @@ export class RedisClient {
    * @param {number} [count=100] - Hint for number of keys per iteration
    * @returns {AsyncGenerator<string[], void, unknown>} Async generator of key arrays
    */
-  async *scan(pattern: string, count: number = 100): AsyncGenerator<string[], void, unknown> {
+  async *scan(
+    pattern: string,
+    count: number = 100,
+  ): AsyncGenerator<string[], void, unknown> {
     if (!this.client.isOpen) await this.client.connect();
     let cursor = 0;
     do {
       const result = await this.client.scan(cursor as any, {
         MATCH: pattern,
-        COUNT: count
+        COUNT: count,
       });
       cursor = result.cursor;
       yield result.keys as string[];
@@ -751,8 +850,10 @@ export class RedisClient {
    */
   async mget(keys: string[]): Promise<Array<string | null>> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('mget', [keys], () => 
-      this.trackMetrics('mget', () => this.client.mGet(keys))
+    return this.executeWithMiddleware(
+      "mget",
+      [keys],
+      () => this.trackMetrics("mget", () => this.client.mGet(keys)),
     );
   }
 
@@ -767,8 +868,10 @@ export class RedisClient {
     for (const [key, value] of Object.entries(keyValuePairs)) {
       args.push(key, value);
     }
-    return this.executeWithMiddleware('mset', [keyValuePairs], () => 
-      this.trackMetrics('mset', () => this.client.mSet(keyValuePairs))
+    return this.executeWithMiddleware(
+      "mset",
+      [keyValuePairs],
+      () => this.trackMetrics("mset", () => this.client.mSet(keyValuePairs)),
     );
   }
 
@@ -779,8 +882,10 @@ export class RedisClient {
    */
   async keys(pattern: string): Promise<string[]> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('keys', [pattern], () => 
-      this.trackMetrics('keys', () => this.client.keys(pattern))
+    return this.executeWithMiddleware(
+      "keys",
+      [pattern],
+      () => this.trackMetrics("keys", () => this.client.keys(pattern)),
     );
   }
 
@@ -793,10 +898,14 @@ export class RedisClient {
   async flushdb(force: boolean = false): Promise<string> {
     if (!this.client.isOpen) await this.client.connect();
     if (!force) {
-      throw new Error('flushdb requires force=true to prevent accidental data loss');
+      throw new Error(
+        "flushdb requires force=true to prevent accidental data loss",
+      );
     }
-    return this.executeWithMiddleware('flushdb', [], () => 
-      this.trackMetrics('flushdb', () => this.client.flushDb())
+    return this.executeWithMiddleware(
+      "flushdb",
+      [],
+      () => this.trackMetrics("flushdb", () => this.client.flushDb()),
     );
   }
 
@@ -807,10 +916,14 @@ export class RedisClient {
    */
   async info(section?: string): Promise<string> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('info', [section], () => 
-      this.trackMetrics('info', () => 
-        section ? this.client.info(section) : this.client.info()
-      )
+    return this.executeWithMiddleware(
+      "info",
+      [section],
+      () =>
+        this.trackMetrics(
+          "info",
+          () => section ? this.client.info(section) : this.client.info(),
+        ),
     );
   }
 
@@ -820,8 +933,10 @@ export class RedisClient {
    */
   async ping(): Promise<string> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('ping', [], () => 
-      this.trackMetrics('ping', () => this.client.ping())
+    return this.executeWithMiddleware(
+      "ping",
+      [],
+      () => this.trackMetrics("ping", () => this.client.ping()),
     );
   }
 
@@ -835,7 +950,8 @@ export class RedisClient {
       /** @param {string} key @returns {void} */
       get: (key: string) => multi.get(key),
       /** @param {string} key @param {string} value @param {Object} [options] @returns {void} */
-      set: (key: string, value: string, options?: any) => options ? multi.set(key, value, options) : multi.set(key, value),
+      set: (key: string, value: string, options?: any) =>
+        options ? multi.set(key, value, options) : multi.set(key, value),
       /** @param {string|string[]} key @returns {void} */
       del: (key: string | string[]) => multi.del(key),
       /** @param {string|string[]} key @returns {void} */
@@ -849,7 +965,8 @@ export class RedisClient {
       /** @param {string} key @param {number} increment @returns {void} */
       incrBy: (key: string, increment: number) => multi.incrBy(key, increment),
       /** @param {string} key @param {string} field @param {string} value @returns {void} */
-      hSet: (key: string, field: string, value: string) => multi.hSet(key, field, value),
+      hSet: (key: string, field: string, value: string) =>
+        multi.hSet(key, field, value),
       /** @param {string} key @param {string} field @returns {void} */
       hGet: (key: string, field: string) => multi.hGet(key, field),
       /** @param {string} key @returns {void} */
@@ -861,7 +978,7 @@ export class RedisClient {
       /** @param {string} key @param {string|string[]} member @returns {void} */
       sRem: (key: string, member: string | string[]) => multi.sRem(key, member),
       /** @returns {Promise<any[]>} */
-      exec: () => this.trackMetrics('pipeline', () => multi.exec())
+      exec: () => this.trackMetrics("pipeline", () => multi.exec()),
     };
   }
 
@@ -874,11 +991,12 @@ export class RedisClient {
     return {
       ...this.pipeline(),
       /** @param {string|string[]} keys @returns {Promise<string>} */
-      watch: (keys: string | string[]) => this.client.watch(Array.isArray(keys) ? keys : [keys]),
+      watch: (keys: string | string[]) =>
+        this.client.watch(Array.isArray(keys) ? keys : [keys]),
       /** @returns {Promise<string>} */
       unwatch: () => this.client.unwatch(),
       /** @returns {string} */
-      discard: () => multi.discard()
+      discard: () => multi.discard(),
     };
   }
 
@@ -898,32 +1016,59 @@ export class RedisClient {
    * @param {Array<{event: string, aggregateId: string, payload: any, headers: Record<string, string>}>} events - Array of events to publish
    * @returns {Promise<Array<{success: boolean, event?: any, error?: string}>>} Results for each event
    */
-  async publishBatchToStream(streamKeyName: string, events: Array<{event: string, aggregateId: string, payload: any, headers: Record<string, string>}>): Promise<Array<{success: boolean, event?: any, error?: string}>> {
+  async publishBatchToStream(
+    streamKeyName: string,
+    events: Array<
+      {
+        event: string;
+        aggregateId: string;
+        payload: any;
+        headers: Record<string, string>;
+      }
+    >,
+  ): Promise<Array<{ success: boolean; event?: any; error?: string }>> {
     if (!this.client.isOpen) await this.client.connect();
     const eventStream = this.getEventStream(streamKeyName);
-    
+
     const results = [];
     for (const event of events) {
       try {
-        await eventStream.publish(event.event, event.aggregateId, event.payload, event.headers);
+        await eventStream.publish(
+          event.event,
+          event.aggregateId,
+          event.payload,
+          event.headers,
+        );
         results.push({ success: true, event });
         if (this.enableMetrics) {
           if (!this.metrics.streams[streamKeyName]) {
-            this.metrics.streams[streamKeyName] = { published: 0, consumed: 0, errors: 0 };
+            this.metrics.streams[streamKeyName] = {
+              published: 0,
+              consumed: 0,
+              errors: 0,
+            };
           }
           this.metrics.streams[streamKeyName].published++;
         }
       } catch (error) {
-        results.push({ success: false, event, error: (error as Error).message });
+        results.push({
+          success: false,
+          event,
+          error: (error as Error).message,
+        });
         if (this.enableMetrics) {
           if (!this.metrics.streams[streamKeyName]) {
-            this.metrics.streams[streamKeyName] = { published: 0, consumed: 0, errors: 0 };
+            this.metrics.streams[streamKeyName] = {
+              published: 0,
+              consumed: 0,
+              errors: 0,
+            };
           }
           this.metrics.streams[streamKeyName].errors++;
         }
       }
     }
-    
+
     return results;
   }
 
@@ -931,24 +1076,31 @@ export class RedisClient {
    * Get health status
    * @returns {Promise<{status: string, connections: {main: boolean, pubsub: boolean}, timestamp: string, error?: string}>} Health status object
    */
-  async getHealth(): Promise<{status: string, connections: {main: boolean, pubsub: boolean}, timestamp: string, error?: string}> {
+  async getHealth(): Promise<
+    {
+      status: string;
+      connections: { main: boolean; pubsub: boolean };
+      timestamp: string;
+      error?: string;
+    }
+  > {
     const health = {
-      status: 'healthy',
+      status: "healthy",
       connections: {
         main: this.client.isOpen,
-        pubsub: this.pubsub.isOpen
+        pubsub: this.pubsub.isOpen,
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
 
     if (!health.connections.main || !health.connections.pubsub) {
-      health.status = 'unhealthy';
+      health.status = "unhealthy";
     }
 
     try {
       await this.ping();
     } catch (error) {
-      health.status = 'unhealthy';
+      health.status = "unhealthy";
       (health as any).error = (error as Error).message;
     }
 
@@ -959,25 +1111,34 @@ export class RedisClient {
    * Get performance metrics
    * @returns {{operations: {total: number, successful: number, failed: number}, latency: {avg: number, p50: number, p95: number, p99: number}, connections: {active: number, idle: number, total: number}, streams: Object.<string, {published: number, consumed: number, errors: number}>}} Metrics object
    */
-  getMetrics(): {operations: {total: number, successful: number, failed: number}, latency: {avg: number, p50: number, p95: number, p99: number}, connections: {active: number, idle: number, total: number}, streams: Record<string, {published: number, consumed: number, errors: number}>} {
+  getMetrics(): {
+    operations: { total: number; successful: number; failed: number };
+    latency: { avg: number; p50: number; p95: number; p99: number };
+    connections: { active: number; idle: number; total: number };
+    streams: Record<
+      string,
+      { published: number; consumed: number; errors: number }
+    >;
+  } {
     const latencyValues = this.metrics.latency.values;
     const sorted = [...latencyValues].sort((a, b) => a - b);
-    
+
     return {
       operations: { ...this.metrics.operations },
       latency: {
-        avg: latencyValues.length ? 
-          latencyValues.reduce((a, b) => a + b, 0) / latencyValues.length : 0,
+        avg: latencyValues.length
+          ? latencyValues.reduce((a, b) => a + b, 0) / latencyValues.length
+          : 0,
         p50: sorted[Math.floor(sorted.length * 0.5)] || 0,
         p95: sorted[Math.floor(sorted.length * 0.95)] || 0,
-        p99: sorted[Math.floor(sorted.length * 0.99)] || 0
+        p99: sorted[Math.floor(sorted.length * 0.99)] || 0,
       },
       connections: {
         active: this.client.isOpen ? 1 : 0,
         idle: 0,
-        total: 1
+        total: 1,
       },
-      streams: { ...this.metrics.streams }
+      streams: { ...this.metrics.streams },
     };
   }
 
@@ -986,9 +1147,19 @@ export class RedisClient {
    * @param {string} streamKeyName - Stream key name
    * @returns {Promise<{exists: boolean, length: number, groups: number, consumers: number, pending: number}>} Stream health object
    */
-  async getStreamHealth(streamKeyName: string): Promise<{exists: boolean, length: number, groups: number, consumers: number, pending: number}> {
+  async getStreamHealth(
+    streamKeyName: string,
+  ): Promise<
+    {
+      exists: boolean;
+      length: number;
+      groups: number;
+      consumers: number;
+      pending: number;
+    }
+  > {
     if (!this.client.isOpen) await this.client.connect();
-    
+
     try {
       const exists = await this.client.exists(streamKeyName);
       if (!exists) {
@@ -997,16 +1168,18 @@ export class RedisClient {
           length: 0,
           groups: 0,
           consumers: 0,
-          pending: 0
+          pending: 0,
         };
       }
 
       const length = await this.client.xLen(streamKeyName);
-      const groups = await this.client.xInfoGroups(streamKeyName).catch(() => []);
-      
+      const groups = await this.client.xInfoGroups(streamKeyName).catch(
+        () => [],
+      );
+
       let totalConsumers = 0;
       let totalPending = 0;
-      
+
       for (const group of groups) {
         totalConsumers += (group as any).consumers;
         totalPending += (group as any).pending;
@@ -1017,10 +1190,36 @@ export class RedisClient {
         length,
         groups: groups.length,
         consumers: totalConsumers,
-        pending: totalPending
+        pending: totalPending,
       };
     } catch (error) {
-      this.logger.error('Error getting stream health:', error);
+      this.logger.error("Error getting stream health:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get detailed event stream health status from the redis-stream-event library
+   * @param {string} streamKeyName - Stream key name
+   * @returns {Promise<StreamHealthStatus>} Detailed stream health status
+   * @throws {Error} If no event stream is connected for the given stream key
+   */
+  async getEventStreamHealth(
+    streamKeyName: string,
+  ): Promise<StreamHealthStatus> {
+    if (!this.eventStream) {
+      throw new Error(
+        `No event stream connected for stream: ${streamKeyName}. Use connectToEventStream() first.`,
+      );
+    }
+
+    try {
+      return await this.eventStream.getStreamHealth();
+    } catch (error) {
+      this.logger.error(
+        `Error getting event stream health for ${streamKeyName}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -1030,22 +1229,31 @@ export class RedisClient {
    * @param {string} streamKeyName - Stream key name
    * @returns {{published: number, consumed: number, errors: number, avgProcessingTime: number}} Stream metrics object
    */
-  getStreamMetrics(streamKeyName: string): {published: number, consumed: number, errors: number, avgProcessingTime: number} {
+  getStreamMetrics(
+    streamKeyName: string,
+  ): {
+    published: number;
+    consumed: number;
+    errors: number;
+    avgProcessingTime: number;
+  } {
     const metrics = this.streamMetrics.get(streamKeyName) || {
       published: 0,
       consumed: 0,
       errors: 0,
-      processingTimes: []
+      processingTimes: [],
     };
 
-    const avgProcessingTime = metrics.processingTimes.length ?
-      metrics.processingTimes.reduce((a: number, b: number) => a + b, 0) / metrics.processingTimes.length : 0;
+    const avgProcessingTime = metrics.processingTimes.length
+      ? metrics.processingTimes.reduce((a: number, b: number) => a + b, 0) /
+        metrics.processingTimes.length
+      : 0;
 
     return {
       published: metrics.published,
       consumed: metrics.consumed,
       errors: metrics.errors,
-      avgProcessingTime
+      avgProcessingTime,
     };
   }
 
@@ -1055,11 +1263,20 @@ export class RedisClient {
    * @param {Array<{score: number, value: string}>|{score: number, value: string}} members - Member(s) to add
    * @returns {Promise<number>} Number of elements added
    */
-  async zadd(key: string, members: Array<{score: number, value: string}> | {score: number, value: string}): Promise<number> {
+  async zadd(
+    key: string,
+    members: Array<{ score: number; value: string }> | {
+      score: number;
+      value: string;
+    },
+  ): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
     const membersArray = Array.isArray(members) ? members : [members];
-    return this.executeWithMiddleware('zadd', [key, membersArray], () => 
-      this.trackMetrics('zadd', () => this.client.zAdd(key, membersArray))
+    return this.executeWithMiddleware(
+      "zadd",
+      [key, membersArray],
+      () =>
+        this.trackMetrics("zadd", () => this.client.zAdd(key, membersArray)),
     );
   }
 
@@ -1071,12 +1288,24 @@ export class RedisClient {
    * @param {boolean} [withScores=false] - Include scores in result
    * @returns {Promise<string[]|Array<{value: string, score: number}>>} Array of members or members with scores
    */
-  async zrange(key: string, start: number, stop: number, withScores: boolean = false): Promise<string[] | Array<{value: string, score: number}>> {
+  async zrange(
+    key: string,
+    start: number,
+    stop: number,
+    withScores: boolean = false,
+  ): Promise<string[] | Array<{ value: string; score: number }>> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('zrange', [key, start, stop, withScores], () => 
-      this.trackMetrics('zrange', () => 
-        withScores ? this.client.zRangeWithScores(key, start, stop) : this.client.zRange(key, start, stop)
-      )
+    return this.executeWithMiddleware(
+      "zrange",
+      [key, start, stop, withScores],
+      () =>
+        this.trackMetrics(
+          "zrange",
+          () =>
+            withScores
+              ? this.client.zRangeWithScores(key, start, stop)
+              : this.client.zRange(key, start, stop),
+        ),
     );
   }
 
@@ -1089,8 +1318,10 @@ export class RedisClient {
   async lpush(key: string, element: string | string[]): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
     const elements = Array.isArray(element) ? element : [element];
-    return this.executeWithMiddleware('lpush', [key, elements], () => 
-      this.trackMetrics('lpush', () => this.client.lPush(key, elements))
+    return this.executeWithMiddleware(
+      "lpush",
+      [key, elements],
+      () => this.trackMetrics("lpush", () => this.client.lPush(key, elements)),
     );
   }
 
@@ -1103,8 +1334,10 @@ export class RedisClient {
   async rpush(key: string, element: string | string[]): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
     const elements = Array.isArray(element) ? element : [element];
-    return this.executeWithMiddleware('rpush', [key, elements], () => 
-      this.trackMetrics('rpush', () => this.client.rPush(key, elements))
+    return this.executeWithMiddleware(
+      "rpush",
+      [key, elements],
+      () => this.trackMetrics("rpush", () => this.client.rPush(key, elements)),
     );
   }
 
@@ -1115,8 +1348,10 @@ export class RedisClient {
    */
   async lpop(key: string): Promise<string | null> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('lpop', [key], () => 
-      this.trackMetrics('lpop', () => this.client.lPop(key))
+    return this.executeWithMiddleware(
+      "lpop",
+      [key],
+      () => this.trackMetrics("lpop", () => this.client.lPop(key)),
     );
   }
 
@@ -1127,8 +1362,10 @@ export class RedisClient {
    */
   async rpop(key: string): Promise<string | null> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('rpop', [key], () => 
-      this.trackMetrics('rpop', () => this.client.rPop(key))
+    return this.executeWithMiddleware(
+      "rpop",
+      [key],
+      () => this.trackMetrics("rpop", () => this.client.rPop(key)),
     );
   }
 
@@ -1139,8 +1376,10 @@ export class RedisClient {
    */
   async llen(key: string): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('llen', [key], () => 
-      this.trackMetrics('llen', () => this.client.lLen(key))
+    return this.executeWithMiddleware(
+      "llen",
+      [key],
+      () => this.trackMetrics("llen", () => this.client.lLen(key)),
     );
   }
 
@@ -1153,8 +1392,11 @@ export class RedisClient {
    */
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('lrange', [key, start, stop], () => 
-      this.trackMetrics('lrange', () => this.client.lRange(key, start, stop))
+    return this.executeWithMiddleware(
+      "lrange",
+      [key, start, stop],
+      () =>
+        this.trackMetrics("lrange", () => this.client.lRange(key, start, stop)),
     );
   }
 
@@ -1166,8 +1408,14 @@ export class RedisClient {
    */
   async sismember(key: string, member: string): Promise<boolean> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('sismember', [key, member], () => 
-      this.trackMetrics('sismember', () => this.client.sIsMember(key, member))
+    return this.executeWithMiddleware(
+      "sismember",
+      [key, member],
+      () =>
+        this.trackMetrics(
+          "sismember",
+          () => this.client.sIsMember(key, member),
+        ),
     );
   }
 
@@ -1178,8 +1426,10 @@ export class RedisClient {
    */
   async scard(key: string): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('scard', [key], () => 
-      this.trackMetrics('scard', () => this.client.sCard(key))
+    return this.executeWithMiddleware(
+      "scard",
+      [key],
+      () => this.trackMetrics("scard", () => this.client.sCard(key)),
     );
   }
 
@@ -1192,8 +1442,10 @@ export class RedisClient {
   async zrem(key: string, member: string | string[]): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
     const members = Array.isArray(member) ? member : [member];
-    return this.executeWithMiddleware('zrem', [key, members], () => 
-      this.trackMetrics('zrem', () => this.client.zRem(key, members))
+    return this.executeWithMiddleware(
+      "zrem",
+      [key, members],
+      () => this.trackMetrics("zrem", () => this.client.zRem(key, members)),
     );
   }
 
@@ -1205,8 +1457,10 @@ export class RedisClient {
    */
   async zscore(key: string, member: string): Promise<number | null> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('zscore', [key, member], () => 
-      this.trackMetrics('zscore', () => this.client.zScore(key, member))
+    return this.executeWithMiddleware(
+      "zscore",
+      [key, member],
+      () => this.trackMetrics("zscore", () => this.client.zScore(key, member)),
     );
   }
 
@@ -1217,8 +1471,13 @@ export class RedisClient {
    */
   async zcard(key: string): Promise<number> {
     if (!this.client.isOpen) await this.client.connect();
-    return this.executeWithMiddleware('zcard', [key], () => 
-      this.trackMetrics('zcard', () => this.client.zCard(key))
+    return this.executeWithMiddleware(
+      "zcard",
+      [key],
+      () => this.trackMetrics("zcard", () => this.client.zCard(key)),
     );
   }
 }
+
+// Export types
+export type { StreamHealthStatus };
