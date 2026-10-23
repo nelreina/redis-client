@@ -1,7 +1,37 @@
 import { createClient, type RedisClientType } from "redis";
 import RedisStreamEvent, {
+  type AutoClaimOptions,
+  type DrainOptions,
+  type EventHandler,
+  type StreamHandler,
   type StreamHealthStatus,
+  type StreamMessage,
 } from "@nelreina/redis-stream-event";
+import {
+  claimConsumerSlot as claimSlot,
+  type ConsumerSlot,
+  type ConsumerSlotOptions,
+} from "./lib/consumer_slot.ts";
+import {
+  type DedicatedClient,
+  startTail,
+  type TailHandle,
+  type TailMessage,
+  type TailStreamOptions,
+  type TrimInfo,
+} from "./lib/tail_stream.ts";
+import {
+  type DegradedInfo,
+  type ReconcileResult,
+  TenantStreamManager,
+  type TenantStreamsOptions,
+  type TenantStreamStatus,
+} from "./lib/tenant_streams.ts";
+import type {
+  EventStreamHandle,
+  StartEventStreamOptions,
+} from "./lib/types.ts";
+import { backoffDelay, errorReason, fieldsToRecord } from "./lib/util.ts";
 
 interface RedisClientConfig {
   redisHost: string;
@@ -13,8 +43,12 @@ interface RedisClientConfig {
   streamMaxLength?: number;
   streamConsumerName?: string;
   enableMetrics?: boolean;
+  /** Opt-in cap on reconnect attempts; unset (default) = reconnect forever */
   connectionRetries?: number;
+  /** Base reconnect delay in ms (default 1000), doubled per attempt */
   connectionRetryDelay?: number;
+  /** Cap of the reconnect delay in ms (default 30000) */
+  connectionMaxDelay?: number;
   poolSize?: number;
   logger?: Logger;
 }
@@ -68,8 +102,9 @@ export class RedisClient {
   private streamMaxLength: number;
   private streamConsumerName: string;
   private enableMetrics: boolean;
-  private connectionRetries: number;
+  private connectionRetries: number | undefined;
   private connectionRetryDelay: number;
+  private connectionMaxDelay: number;
   private poolSize: number;
   private middleware: MiddlewareFunction[];
   private logger: Logger;
@@ -78,6 +113,9 @@ export class RedisClient {
   private pubsub: RedisClientType;
   private eventStream: RedisStreamEvent | null;
   private streamMetrics: Map<string, StreamMetrics>;
+  private streamHandles: Set<EventStreamHandle>;
+  // deno-lint-ignore no-explicit-any
+  private clientView: any;
 
   /**
    * Creates a new Redis client instance
@@ -90,6 +128,9 @@ export class RedisClient {
    * @param {string} [config.timeZone="America/Curacao"] - Timezone for event timestamps
    * @param {number} [config.streamMaxLength=10000] - Maximum length of the stream
    * @param {string} [config.streamConsumerName="consumer-1"] - Name of the stream consumer
+   * @param {number} [config.connectionRetries] - Opt-in cap on reconnect attempts (default: unbounded)
+   * @param {number} [config.connectionRetryDelay=1000] - Base reconnect delay, doubled per attempt
+   * @param {number} [config.connectionMaxDelay=30000] - Cap of the reconnect delay
    * @param {Logger} [config.logger] - Custom logger instance
    */
   constructor(config: RedisClientConfig) {
@@ -103,8 +144,9 @@ export class RedisClient {
       streamMaxLength = 10000,
       streamConsumerName = "consumer-1",
       enableMetrics = false,
-      connectionRetries = 3,
+      connectionRetries,
       connectionRetryDelay = 1000,
+      connectionMaxDelay = 30000,
       poolSize = 1,
       logger,
     } = config;
@@ -116,6 +158,7 @@ export class RedisClient {
     this.enableMetrics = enableMetrics;
     this.connectionRetries = connectionRetries;
     this.connectionRetryDelay = connectionRetryDelay;
+    this.connectionMaxDelay = connectionMaxDelay;
     this.poolSize = poolSize;
 
     this.middleware = [];
@@ -130,18 +173,25 @@ export class RedisClient {
       url: this.url,
       name: this.serviceName,
       socket: {
-        reconnectStrategy: (retries) => {
-          if (retries > this.connectionRetries) {
-            return new Error("Max retries reached");
-          }
-          return Math.min(retries * this.connectionRetryDelay, 5000);
-        },
+        reconnectStrategy: (retries: number) =>
+          reconnectDelay(retries, {
+            maxRetries: this.connectionRetries,
+            baseMs: this.connectionRetryDelay,
+            maxMs: this.connectionMaxDelay,
+          }),
       },
     });
 
     this.pubsub = this.client.duplicate();
+    this.pubsub.on("error", (error) => {
+      this.logger.error(
+        `❌ Redis pubsub connection error: ${errorReason(error)}`,
+      );
+    });
     this.eventStream = null;
     this.streamMetrics = new Map();
+    this.streamHandles = new Set();
+    this.clientView = null;
 
     this.client.on("connect", () => {
       this.logger.info(`✅ Connected to redis: ${redisHost}`);
@@ -152,7 +202,13 @@ export class RedisClient {
       this.logger.error(error);
     });
 
-    if (!this.client.isOpen) this.client.connect();
+    if (!this.client.isOpen) {
+      this.client.connect().catch((error) => {
+        this.logger.error(
+          `❌ Redis connection failed: ${errorReason(error)}`,
+        );
+      });
+    }
   }
 
   /**
@@ -368,52 +424,57 @@ export class RedisClient {
     };
 
     return new RedisStreamEvent(
-      this.client as any,
+      this.streamClient(),
       streamKeyName,
-      this.serviceName,
+      options.group ?? this.serviceName,
       options,
     );
   }
 
   /**
-   * Connects to a Redis Stream and sets up event handling
-   * @param {string} streamKeyName - Stream key name
-   * @param {Object|((event: any) => void|Promise<void>)} [options={}] - Configuration options or handler function
-   * @param {boolean|Array<string>} [events=false] - Events to filter (true for all events)
-   * @param {string} [startID="$"] - Start ID for the stream
-   * @returns {Promise<void>}
+   * Main client as handed to redis-stream-event: its duplicate() connections
+   * (one per consumer loop) get an error listener, so a Redis outage is logged
+   * and reconnected instead of surfacing as an unhandled 'error' event.
+   * @private
    */
-  async connectToEventStream(
+  // deno-lint-ignore no-explicit-any
+  private streamClient(): any {
+    if (this.clientView) return this.clientView;
+    const logger = () => this.logger;
+    this.clientView = new Proxy(this.client, {
+      get(target, prop) {
+        if (prop === "duplicate") {
+          // deno-lint-ignore no-explicit-any
+          return (...args: any[]) => {
+            // deno-lint-ignore no-explicit-any
+            const dup = (target as any).duplicate(...args);
+            dup.on("error", (error: unknown) => {
+              logger().debug(
+                `Redis stream connection error: ${errorReason(error)}`,
+              );
+            });
+            return dup;
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    return this.clientView;
+  }
+
+  /**
+   * Wraps a stream handler with the per-stream metrics bookkeeping
+   * @private
+   */
+  private wrapStreamHandler(
     streamKeyName: string,
-    options: any = {},
-    events: boolean | string[] = false,
-    startID: string = "$",
-  ): Promise<void> {
-    let handler;
-    let streamOptions = {
-      timeZone: this.timeZone,
-      maxLength: this.streamMaxLength,
-      consumer: this.streamConsumerName,
-      startID,
-    };
-
-    if (typeof options === "function") {
-      handler = options;
-    } else {
-      handler = options.handler || ((str: any) => console.info(str));
-      streamOptions = {
-        ...streamOptions,
-        ...options,
-        startID: options.startID || startID,
-      };
-      events = options.events !== undefined ? options.events : events;
-    }
-
-    this.eventStream = this.getEventStream(streamKeyName, streamOptions);
-
-    if (!this.client.isOpen) await this.client.connect();
-
-    const wrappedHandler = async (event: any) => {
+    // deno-lint-ignore no-explicit-any
+    handler: (event: any) => any,
+    // deno-lint-ignore no-explicit-any
+  ): (event: any) => Promise<void> {
+    // deno-lint-ignore no-explicit-any
+    return async (event: any) => {
       const start = Date.now();
       try {
         await handler(event);
@@ -458,12 +519,301 @@ export class RedisClient {
         throw error;
       }
     };
+  }
 
-    const stream = await (this.eventStream as any).createStream(
-      streamKeyName,
-      this.serviceName,
+  /**
+   * Connects to a Redis Stream and sets up event handling
+   * @param {string} streamKeyName - Stream key name
+   * @param {Object|((event: any) => void|Promise<void>)} [options={}] - Configuration options or handler function
+   * @param {boolean|Array<string>} [events=false] - Events to filter (true for all events)
+   * @param {string} [startID="$"] - Start ID for the stream
+   * @returns {Promise<void>}
+   */
+  async connectToEventStream(
+    streamKeyName: string,
+    options: any = {},
+    events: boolean | string[] = false,
+    startID: string = "$",
+  ): Promise<void> {
+    let handler;
+    let streamOptions = {
+      timeZone: this.timeZone,
+      maxLength: this.streamMaxLength,
+      consumer: this.streamConsumerName,
+      startID,
+    };
+
+    if (typeof options === "function") {
+      handler = options;
+    } else {
+      handler = options.handler || ((str: any) => console.info(str));
+      streamOptions = {
+        ...streamOptions,
+        ...options,
+        startID: options.startID || startID,
+      };
+      events = options.events !== undefined ? options.events : events;
+    }
+
+    // deno-lint-ignore no-explicit-any
+    const opts: any = streamOptions;
+    const { handler: _h, events: _e, startID: sid, consumer, ...extra } = opts;
+    const handle = this.startStream(streamKeyName, {
+      handler,
+      events: events as StartEventStreamOptions["events"],
+      startId: sid,
+      consumerName: consumer,
+      blockMs: extra.blockMs,
+      drain: extra.drain,
+      autoClaim: extra.autoClaim,
+    }, extra);
+    await handle.done;
+  }
+
+  /**
+   * Starts one consumer loop on a stream and returns its handle without waiting.
+   * The group (= serviceName unless `group` is given) is created at `startId`
+   * with MKSTREAM when it does not exist; redis-stream-event 0.11 then drains the
+   * consumer's own PEL (parking poison entries), claims idle entries and reads `>`.
+   *
+   * @param {string} streamKey - Stream key
+   * @param {StartEventStreamOptions} opts - handler, events, startId, consumerName, group, blockMs, drain, autoClaim
+   * @returns {EventStreamHandle} `{stop(), done, clientId, running, streamKey, consumerName}`;
+   *   `done` resolves on stop() and rejects when the loop fails
+   */
+  startEventStream(
+    streamKey: string,
+    opts: StartEventStreamOptions,
+  ): EventStreamHandle {
+    return this.startStream(streamKey, opts, {});
+  }
+
+  /** @private */
+  private startStream(
+    streamKey: string,
+    opts: StartEventStreamOptions,
+    // deno-lint-ignore no-explicit-any
+    extraStreamOptions: Record<string, any>,
+  ): EventStreamHandle {
+    if (!opts || typeof opts.handler !== "function") {
+      throw new Error("startEventStream(): opts.handler is required");
+    }
+    const consumerName = opts.consumerName ?? this.streamConsumerName;
+    const startId = opts.startId ?? "$";
+    const group = opts.group ?? this.serviceName;
+    const es = this.getEventStream(streamKey, {
+      logger: this.logger,
+      ...extraStreamOptions,
+      consumer: consumerName,
+      startID: startId,
+      group,
+      ...(opts.blockMs !== undefined ? { blockMs: opts.blockMs } : {}),
+    });
+    this.eventStream = es;
+
+    let sh: StreamHandler | null = null;
+    let stopping = false;
+    const wrapped = this.wrapStreamHandler(streamKey, opts.handler);
+    const done = (async () => {
+      if (!this.client.isOpen) await this.client.connect();
+      sh = await es.createStream(streamKey, { startId });
+      if (!sh) {
+        throw new Error(
+          `could not create consumer group ${group} on ${streamKey}`,
+        );
+      }
+      if (stopping) {
+        await sh.stop();
+        return;
+      }
+      await sh.subscribe(
+        wrapped as EventHandler,
+        normalizeEvents(opts.events),
+        {
+          consumer: consumerName,
+          startId,
+          ...(opts.blockMs !== undefined ? { blockMs: opts.blockMs } : {}),
+          ...(opts.drain !== undefined ? { drain: opts.drain } : {}),
+          ...(opts.autoClaim !== undefined
+            ? { autoClaim: opts.autoClaim }
+            : {}),
+        },
+      );
+    })();
+    // the caller observes `done`; this only keeps an unobserved failure from
+    // becoming an unhandled rejection
+    done.catch((error) => {
+      this.logger.error(
+        `Stream loop ${streamKey} (${consumerName}) failed: ${
+          errorReason(error)
+        }`,
+      );
+    });
+
+    const handle: EventStreamHandle = {
+      streamKey,
+      consumerName,
+      get clientId() {
+        return (sh as StreamHandler | null)?.clientId ?? 0;
+      },
+      get running() {
+        return (sh as StreamHandler | null)?.running ?? false;
+      },
+      stop: async () => {
+        stopping = true;
+        const h = sh as StreamHandler | null;
+        if (h) await h.stop();
+        await done.catch(() => {});
+      },
+      done,
+    };
+    this.streamHandles.add(handle);
+    done.finally(() => this.streamHandles.delete(handle)).catch(() => {});
+    return handle;
+  }
+
+  /**
+   * Handles of the consumer loops started by this client that are still running
+   * @returns {EventStreamHandle[]}
+   */
+  getEventStreamHandles(): EventStreamHandle[] {
+    return [...this.streamHandles];
+  }
+
+  /**
+   * Stops every consumer loop started by this client (startEventStream / connectToEventStream)
+   * @returns {Promise<void>}
+   */
+  async stopEventStreams(): Promise<void> {
+    await Promise.all([...this.streamHandles].map((h) => h.stop()));
+  }
+
+  /**
+   * Creates a consumer group at `startId` with MKSTREAM; an existing group is left as is
+   * @param {string} streamKey - Stream key
+   * @param {string} [group=serviceName] - Group name
+   * @param {string} [startId="$"] - Group creation id
+   * @returns {Promise<void>}
+   */
+  async ensureStreamGroup(
+    streamKey: string,
+    group: string = this.serviceName,
+    startId: string = "$",
+  ): Promise<void> {
+    if (!this.client.isOpen) await this.client.connect();
+    try {
+      await this.client.sendCommand([
+        "XGROUP",
+        "CREATE",
+        streamKey,
+        group,
+        startId,
+        "MKSTREAM",
+      ]);
+    } catch (error) {
+      if (!/BUSYGROUP|already exists/.test(errorReason(error))) throw error;
+    }
+  }
+
+  /**
+   * XGROUP DELCONSUMER for consumers of `group` with an empty PEL that were idle
+   * longer than `idleMs` (never `keep`)
+   * @returns {Promise<string[]>} Names removed
+   */
+  async sweepIdleConsumers(
+    streamKey: string,
+    group: string,
+    keep: string,
+    idleMs: number,
+  ): Promise<string[]> {
+    if (!this.client.isOpen) await this.client.connect();
+    const raw = await this.client.sendCommand([
+      "XINFO",
+      "CONSUMERS",
+      streamKey,
+      group,
+    ]);
+    const removed: string[] = [];
+    if (!Array.isArray(raw)) return removed;
+    for (const row of raw) {
+      const c = fieldsToRecord(row);
+      if (!c.name || c.name === keep) continue;
+      if (Number(c.pending) !== 0 || !(Number(c.idle) > idleMs)) continue;
+      await this.client.sendCommand([
+        "XGROUP",
+        "DELCONSUMER",
+        streamKey,
+        group,
+        c.name,
+      ]);
+      removed.push(c.name);
+    }
+    return removed;
+  }
+
+  /**
+   * Tails a stream with plain XREAD BLOCK on a dedicated connection (every
+   * caller sees every entry; no consumer group). Resumes from the last handled
+   * id, also after a reconnect.
+   *
+   * @param {string} streamKey - Stream key (e.g. ynohub:config:events)
+   * @param {TailStreamOptions} opts - `{fromId, handler, blockMs=5000, count=100, onTrimmed?}`
+   * @returns {TailHandle} `{stop(), done, lastId, clientId, running}`
+   */
+  tailStream(streamKey: string, opts: TailStreamOptions): TailHandle {
+    const dedicated = this.client.duplicate();
+    dedicated.on("error", (error) => {
+      this.logger.debug(`Redis tail connection error: ${errorReason(error)}`);
+    });
+    return startTail(
+      this.client as unknown as DedicatedClient,
+      dedicated as unknown as DedicatedClient,
+      streamKey,
+      opts,
+      this.logger,
     );
-    await stream.subscribe(wrappedHandler, events as any);
+  }
+
+  /**
+   * Claims a consumer slot: the lowest free `<keyPrefix>:<serviceName>:<n>` via
+   * SET NX PX, renewed with a fenced Lua compare-and-renew. Gives the stable
+   * consumer name `<serviceName>-<n>`. Env CONSUMER_NAME wins over the lease.
+   *
+   * @param {string} [serviceName=this.serviceName] - Service (= consumer group) name
+   * @param {ConsumerSlotOptions} [opts] - ttlMs=30000, renewMs=10000, keyPrefix, podName=HOSTNAME, onLost
+   * @returns {Promise<ConsumerSlot>} `{name, n, key, podName, leased, release()}`
+   */
+  async claimConsumerSlot(
+    serviceName: string = this.serviceName,
+    opts: ConsumerSlotOptions = {},
+  ): Promise<ConsumerSlot> {
+    if (!this.client.isOpen) await this.client.connect();
+    return await claimSlot(this.client, serviceName, {
+      logger: this.logger,
+      ...opts,
+    });
+  }
+
+  /**
+   * Creates a TenantStreamManager: one consumer loop per active tenant stream,
+   * reconciled on every CONFIG_CACHE_REFRESHED control event, on a timer and on
+   * retry; heartbeat in `applied:<svc>:<consumerName>`. Call `start()`.
+   *
+   * @param {TenantStreamsOptions} opts - see TenantStreamsOptions
+   * @returns {TenantStreamManager}
+   */
+  tenantStreams(opts: TenantStreamsOptions): TenantStreamManager {
+    return new TenantStreamManager({
+      serviceName: this.serviceName,
+      logger: this.logger,
+      getConnection: () => this.client,
+      startEventStream: (k, o) => this.startEventStream(k, o),
+      tailStream: (k, o) => this.tailStream(k, o),
+      claimConsumerSlot: (svc, o) => this.claimConsumerSlot(svc, o),
+      ensureStreamGroup: (k, g, id) => this.ensureStreamGroup(k, g, id),
+      sweepIdleConsumers: (k, g, keep, idle) =>
+        this.sweepIdleConsumers(k, g, keep, idle),
+    }, opts);
   }
 
   /**
@@ -615,13 +965,14 @@ export class RedisClient {
    * @returns {Promise<void>}
    */
   async close(): Promise<void> {
+    await this.stopEventStreams().catch(() => {});
     if (this.client.isOpen) {
-      await (this.client as any).close();
+      await closeConnection(this.client);
       this.logger.info("✅ Redis client connection closed");
     }
 
     if (this.pubsub.isOpen) {
-      await (this.pubsub as any).close();
+      await closeConnection(this.pubsub);
       this.logger.info("✅ Redis pubsub connection closed");
     }
   }
@@ -1479,5 +1830,60 @@ export class RedisClient {
   }
 }
 
+/**
+ * Reconnect delay used by the client's reconnectStrategy: unbounded by default,
+ * capped exponential backoff (0, base, 2·base, … up to maxMs). With `maxRetries`
+ * set, an Error is returned after that many attempts (node-redis then gives up).
+ */
+export function reconnectDelay(
+  retries: number,
+  opts: { maxRetries?: number; baseMs?: number; maxMs?: number } = {},
+): number | Error {
+  if (opts.maxRetries !== undefined && retries > opts.maxRetries) {
+    return new Error("Max retries reached");
+  }
+  return backoffDelay(retries, opts.baseMs ?? 1000, opts.maxMs ?? 30000);
+}
+
+function normalizeEvents(
+  events: StartEventStreamOptions["events"],
+): string[] | null {
+  if (Array.isArray(events)) return events;
+  if (typeof events === "string" && events) return [events];
+  return null;
+}
+
+// deno-lint-ignore no-explicit-any
+async function closeConnection(c: any): Promise<void> {
+  if (typeof c.quit === "function") await c.quit();
+  else if (typeof c.close === "function") await c.close();
+  else if (typeof c.disconnect === "function") await c.disconnect();
+}
+
+export { TenantStreamManager };
+export {
+  DEFAULT_SLOT_PREFIX,
+  RELEASE_SCRIPT,
+  RENEW_SCRIPT,
+} from "./lib/consumer_slot.ts";
+
 // Export types
-export type { StreamHealthStatus };
+export type {
+  AutoClaimOptions,
+  ConsumerSlot,
+  ConsumerSlotOptions,
+  DegradedInfo,
+  DrainOptions,
+  EventHandler,
+  EventStreamHandle,
+  ReconcileResult,
+  StartEventStreamOptions,
+  StreamHealthStatus,
+  StreamMessage,
+  TailHandle,
+  TailMessage,
+  TailStreamOptions,
+  TenantStreamsOptions,
+  TenantStreamStatus,
+  TrimInfo,
+};

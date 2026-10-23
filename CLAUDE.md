@@ -24,10 +24,10 @@ redis-client/
 
 ### Testing
 
-Currently, there are no test files in the project. When adding tests:
+Integration tests in `tests/` run against a local Redis (localhost:6379):
 
 ```bash
-deno test
+deno task test
 ```
 
 ### Type Checking
@@ -71,6 +71,20 @@ deno lint
    - `@nelreina/redis-stream-event`: JSR package for stream event handling
 
 ## Recent Changes
+
+### v0.11.0
+
+- Depends on @nelreina/redis-stream-event 0.11.0 (stop(), PEL drain with
+  parking, XAUTOCLAIM)
+- `startEventStream()` handles `{stop, done, clientId}`; `connectToEventStream`
+  delegates
+- `tailStream()` (XREAD BLOCK control-stream reader), `claimConsumerSlot()`
+  (fenced slot lease)
+- `tenantStreams()` → `TenantStreamManager` (lib/tenant_streams.ts): hot tenant
+  add/remove
+- Reconnect unbounded with capped backoff by default; `connectionRetries` is an
+  opt-in cap
+- Tests: `deno task test` (tests/, local Redis)
 
 ### v0.9.0
 

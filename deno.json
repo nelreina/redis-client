@@ -1,10 +1,20 @@
 {
   "name": "@nelreina/redis-client",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "license": "MIT",
   "exports": "./mod.ts",
   "imports": {
-    "@nelreina/redis-stream-event": "jsr:@nelreina/redis-stream-event@^0.10.2",
-    "redis": "npm:redis@^4.7.0"
+    "@nelreina/redis-stream-event": "jsr:@nelreina/redis-stream-event@^0.11.0",
+    "redis": "npm:redis@^4.7.0",
+    "@std/assert": "jsr:@std/assert@^1"
+  },
+  "tasks": {
+    "test": "deno test --allow-net --allow-env --allow-read --allow-sys tests/",
+    "check": "deno check mod.ts"
+  },
+  "publish": {
+    "exclude": [
+      "tests/"
+    ]
   }
 }
